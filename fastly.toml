@@ -1,0 +1,34 @@
+# This file describes a Fastly Compute package. To learn more visit:
+# https://www.fastly.com/documentation/reference/compute/fastly-toml
+
+authors = ["<oss@fastly.com>"]
+description = "Implements publish/subscribe messaging."
+language = "rust"
+manifest_version = 3
+name = "Pub/Sub"
+
+[scripts]
+  build = "cargo build --bin pubsub --release --target wasm32-wasi --color always"
+
+[setup]
+
+  [setup.backends]
+
+    [setup.backends.api]
+      address = "api.fastly.com"
+      description = "Fastly API"
+
+  [setup.config_stores]
+
+    [setup.config_stores.config]
+      description = "Store for non-secret configuration values"
+
+  [setup.kv_stores]
+
+    [setup.kv_stores.keys]
+      description = "Store for authentication keys"
+
+  [setup.secret_stores]
+
+    [setup.secret_stores.secrets]
+      description = "Store for secret configuration values"
