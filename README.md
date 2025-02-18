@@ -50,6 +50,10 @@ fastly secret-store-entry create -s {STORE_ID} --name publish-token
 
 The above command will prompt for the token value, which you can paste in.
 
+# Questions/Comments 
+
+Use the issues for specific code related bugs or features or chat with us on any additional questions on the [Fastly Community Forum](https://community.fastly.com/t/announcing-fastlys-official-pubsub-application/3876). 
+
 # Usage
 
 Clients connect using HTTP or MQTT (over WebSockets). Requests must be authorized using tokens.
