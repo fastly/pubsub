@@ -1,6 +1,6 @@
 use crate::{admin, auth, config, events, mqtttransport};
 use fastly::http::{header, Method, StatusCode};
-use fastly::{Backend, Error, Request, Response};
+use fastly::{Error, Request, Response};
 
 trait WithCors {
     fn with_cors(self) -> Self;
@@ -22,14 +22,10 @@ impl WithCors for Response {
     }
 }
 
-fn is_tls(req: &Request) -> bool {
-    req.get_url().scheme().eq_ignore_ascii_case("https")
-}
-
 pub fn handle_request(
     config_source: &dyn config::Source,
     authorizor: &dyn auth::Authorizor,
-    mut req: Request,
+    req: Request,
 ) -> Result<(), Error> {
     let config = match config_source.config() {
         Ok(config) => config,
@@ -43,9 +39,6 @@ pub fn handle_request(
             return Ok(());
         }
     };
-
-    let origin = Backend::from_name("origin")
-        .expect("from_name() should always succeed even if the backend doesn't exist");
 
     let path = req.get_url().path();
 
