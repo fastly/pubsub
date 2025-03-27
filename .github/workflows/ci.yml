@@ -3,7 +3,7 @@ on: [push, pull_request]
 name: CI
 
 env:
-  RUST_TOOLCHAIN: 1.84 # Keep in sync with rust-toolchain.toml (this action does not support rust-toolchain.toml)
+  RUST_TOOLCHAIN: stable # Keep in sync with rust-toolchain.toml (this action does not support rust-toolchain.toml)
 
 jobs:
   CI:
@@ -48,11 +48,10 @@ jobs:
         run: cargo clippy -- -D warnings
         shell: bash
 
+      - name: Build
+        run: cargo build
+        shell: bash
+
       - name: Run cargo test
-        run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            cargo test --target=wasm32-wasip1
-          else
-            cargo test
-          fi
+        run: cargo test
         shell: bash
