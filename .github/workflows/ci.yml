@@ -2,6 +2,9 @@ on: [push, pull_request]
 
 name: CI
 
+env:
+  RUST_TOOLCHAIN: 1.84 # Keep in sync with rust-toolchain.toml (this action does not support rust-toolchain.toml)
+
 jobs:
   CI:
     name: CI Suite
@@ -19,7 +22,7 @@ jobs:
       - name: Install Rust 
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.84 # Keep in sync with rust-toolchain.toml (this action does not support rust-toolchain.toml)
+          toolchain: $RUST_TOOLCHAIN
 
       - name: Setup Cache
         uses: actions/cache@v4
@@ -30,7 +33,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ env.RUST_TOOLCHAIN }}
 
       - name: Run cargo check
         run: cargo check
