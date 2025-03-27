@@ -51,7 +51,7 @@ jobs:
       - name: Run cargo test
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
-            cargo test --target=x86_64-pc-windows-msvc
+            cargo test --target=wasm32-wasip1
           else
             cargo test
           fi
