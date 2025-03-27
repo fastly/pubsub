@@ -19,7 +19,7 @@ jobs:
       - name: Install Rust 
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.84.0 # Keep in sync with rust-toolchain.toml (this action does not support rust-toolchain.toml)
+          toolchain: 1.84 # Keep in sync with rust-toolchain.toml (this action does not support rust-toolchain.toml)
 
       - name: Setup Cache
         uses: actions/cache@v4
@@ -45,5 +45,10 @@ jobs:
         shell: bash
 
       - name: Run cargo test
-        run: cargo test
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cargo test --target=x86_64-pc-windows-msvc
+          else
+            cargo test
+          fi
         shell: bash
