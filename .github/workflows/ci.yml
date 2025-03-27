@@ -1,0 +1,49 @@
+on: [push, pull_request]
+
+name: CI
+
+jobs:
+  CI:
+    name: CI Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macOS-latest
+          - windows-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust 
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.84.0 # Keep in sync with rust-toolchain.toml (this action does not support rust-toolchain.toml)
+
+      - name: Setup Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run cargo check
+        run: cargo check
+        shell: bash
+
+      - name: check formatting
+        run: cargo fmt --all --check
+        shell: bash
+
+      - name: Run cargo clippy
+        run: cargo clippy -- -D warnings
+        shell: bash
+
+      - name: Run cargo test
+        run: cargo test
+        shell: bash
