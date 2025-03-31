@@ -8,7 +8,7 @@ manifest_version = 3
 name = "Pub/Sub"
 
 [scripts]
-  build = "cargo build --bin pubsub --release --target wasm32-wasi --color always"
+  build = "cargo build --bin pubsub --release --target wasm32-wasip1 --color always"
 
 [setup]
 
