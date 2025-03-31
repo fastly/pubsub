@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::{self, Write};
 use std::str;
 
@@ -132,8 +133,8 @@ pub struct UnsubAck {
 
 #[derive(Debug)]
 pub struct Publish<'a> {
-    pub topic: &'a str,
-    pub message: &'a [u8],
+    pub topic: Cow<'a, str>,
+    pub message: Cow<'a, [u8]>,
 }
 
 #[derive(Debug)]
@@ -329,7 +330,10 @@ impl<'a> Packet<'a> {
 
                 let message = &src[props_len..];
 
-                Self::Publish(Publish { topic, message })
+                Self::Publish(Publish {
+                    topic: Cow::from(topic),
+                    message: Cow::from(message),
+                })
             }
             8 => {
                 // spec says flags must be set to 2, without explanation
@@ -455,7 +459,7 @@ impl<'a> Packet<'a> {
                 out.extend(topic.as_bytes());
                 write_int(&mut out, 0)?; // property length
 
-                out.extend(*message);
+                out.extend(message.as_ref());
             }
             _ => panic!("cannot serialize type"),
         }
@@ -489,7 +493,10 @@ mod tests {
         let topic = "fruit";
         let message = "apple".as_bytes();
 
-        let p = Packet::Publish(Publish { topic, message });
+        let p = Packet::Publish(Publish {
+            topic: Cow::from(topic),
+            message: Cow::from(message),
+        });
 
         let mut data = Vec::new();
         p.serialize(&mut data).unwrap();
@@ -506,6 +513,6 @@ mod tests {
         };
 
         assert_eq!(publish.topic, "fruit");
-        assert_eq!(publish.message, b"apple");
+        assert_eq!(publish.message.as_ref(), b"apple");
     }
 }
