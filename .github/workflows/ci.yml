@@ -61,5 +61,5 @@ jobs:
         shell: bash
 
       - name: Run cargo test
-        run: cargo nextest run
+        run: cargo nextest run --target=wasm32-wasip1
         shell: bash
