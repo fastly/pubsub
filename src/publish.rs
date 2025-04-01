@@ -3,6 +3,7 @@ use base64::Engine;
 use fastly::error::anyhow;
 use fastly::http::{header, StatusCode};
 use fastly::{Error, Request};
+use std::borrow::Cow;
 use std::env;
 use std::fmt::Write;
 use std::str;
@@ -40,7 +41,11 @@ pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error
 
     let mqtt_content = {
         let mut v = Vec::new();
-        Packet::Publish(Publish { topic, message }).serialize(&mut v)?;
+        Packet::Publish(Publish {
+            topic: Cow::from(topic),
+            message: Cow::from(message),
+        })
+        .serialize(&mut v)?;
 
         base64::prelude::BASE64_STANDARD.encode(v)
     };

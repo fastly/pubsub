@@ -30,7 +30,7 @@ pub struct Context<'a> {
     pub state: State,
 }
 
-pub fn handle_connect(ctx: &mut Context, p: Connect) -> Vec<Packet<'static>> {
+pub fn handle_connect<'a>(ctx: &mut Context, p: Connect<'a>) -> Vec<Packet<'a>> {
     if p.version != 5 {
         let out = if p.version > 5 {
             Packet::ConnAck(ConnAck {
@@ -74,7 +74,7 @@ pub fn handle_pingreq(_ctx: &mut Context, _p: PingReq) -> Vec<Packet<'static>> {
     vec![Packet::PingResp(PingResp)]
 }
 
-pub fn handle_subscribe(ctx: &mut Context, p: Subscribe) -> Vec<Packet<'static>> {
+pub fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'a>> {
     if p.topic.is_empty() {
         return vec![Packet::SubAck(SubAck {
             id: p.id,
@@ -111,7 +111,7 @@ pub fn handle_subscribe(ctx: &mut Context, p: Subscribe) -> Vec<Packet<'static>>
     vec![Packet::SubAck(SubAck { id: p.id, reason })]
 }
 
-pub fn handle_unsubscribe(ctx: &mut Context, p: Unsubscribe) -> Vec<Packet<'static>> {
+pub fn handle_unsubscribe<'a>(ctx: &mut Context, p: Unsubscribe<'a>) -> Vec<Packet<'a>> {
     let reason = if ctx.state.subs.contains(p.topic) {
         ctx.state.subs.remove(p.topic);
 
@@ -123,7 +123,7 @@ pub fn handle_unsubscribe(ctx: &mut Context, p: Unsubscribe) -> Vec<Packet<'stat
     vec![Packet::UnsubAck(UnsubAck { id: p.id, reason })]
 }
 
-pub fn handle_publish(ctx: &mut Context, p: Publish) -> Vec<Packet<'static>> {
+pub fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> {
     if p.topic.starts_with('$') {
         // don't accept publishes to topics beginning with $, per the spec
         return vec![];
@@ -133,23 +133,33 @@ pub fn handle_publish(ctx: &mut Context, p: Publish) -> Vec<Packet<'static>> {
 
     if let Some(s) = &ctx.state.token {
         if let Ok(caps) = ctx.authorizor.validate_token(s) {
-            if caps.can_publish(p.topic) {
+            if caps.can_publish(p.topic.as_ref()) {
                 allowed = true;
             }
         }
     }
 
+    let mut out = vec![];
+
     if allowed && p.message.len() < MESSAGE_SIZE_MAX {
-        if let Err(e) = publish(&ctx.config.publish_token, p.topic, p.message) {
-            // no error response. only log
-            println!("failed to publish: {:?}", e);
+        if !ctx.config.publish_token.is_empty() {
+            if let Err(e) = publish(&ctx.config.publish_token, &p.topic, &p.message) {
+                // no error response. only log
+                println!("failed to publish: {:?}", e);
+            }
+        } else {
+            println!("publishing not configured, echoing back to sender");
+            out.push(Packet::Publish(Publish {
+                topic: p.topic,
+                message: p.message,
+            }));
         }
     }
 
-    vec![]
+    out
 }
 
-pub fn handle_packet(ctx: &mut Context, p: Packet) -> Vec<Packet<'static>> {
+pub fn handle_packet<'a>(ctx: &mut Context, p: Packet<'a>) -> Vec<Packet<'a>> {
     let mut out = Vec::new();
 
     match p {
