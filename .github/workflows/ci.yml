@@ -1,0 +1,78 @@
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+name: CI
+
+jobs:
+  CI:
+    name: CI Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macOS-latest
+          - windows-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust 
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable # keep this in sync with rust-toolchain.toml
+          components: clippy, rustfmt
+
+      - name: Set Cache Variable
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            echo "RUST_TOOLCHAIN=$(rustc --version | sed -e "s/\ /_/g")" >> $GITHUB_ENV
+          else
+            echo "RUST_TOOLCHAIN=$(rustc --version | sed s/\ /_/g)" >> $GITHUB_ENV
+          fi
+        shell: bash
+
+      - name: Setup Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ env.RUST_TOOLCHAIN }}
+
+
+
+      - name: "Install cargo nextest"
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      
+      - name: "Install Viceroy"
+        run: cargo install viceroy
+
+      - name: Run cargo check
+        run: cargo check
+        shell: bash
+
+      - name: check formatting
+        run: cargo fmt --all --check
+        shell: bash
+
+      - name: Run cargo clippy
+        run: cargo clippy -- -D warnings
+        shell: bash
+
+      - name: Build
+        run: cargo build --target=wasm32-wasip1
+        shell: bash
+
+      - name: Run cargo test
+        run: cargo nextest run --target=wasm32-wasip1
+        shell: bash
