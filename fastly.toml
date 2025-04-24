@@ -32,3 +32,9 @@ name = "Pub/Sub"
 
     [setup.secret_stores.secrets]
       description = "Store for secret configuration values"
+
+[local_server]
+
+  [local_server.kv_stores]
+    keys = { file = "example_keys.json", format = "json" }
+    messages = { file = "example_messages.json", format = "json" }
