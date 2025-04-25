@@ -166,4 +166,3 @@ Notes & limitations about the MQTT interface:
 * Only WebSocket connections are supported, not plain TCP connections.
 * Only MQTT protocol version 5 is supported.
 * Wildcard subscriptions are not supported.
-* MQTT packets received from the client may span multiple WebSocket messages. However, due to the way this app buffers partial content, the combined size of all messages containing partial content is limited to 8,192 bytes. For example, sending a 32kB packet to the server in a single message is fine. Sending a 32kB packet to the server spanning three messages of sizes 4kB, 4kB, and 24kB is also fine. However, sending a packet to the server spanning three messages of sizes 24kB, 4kB, 4kB would fail.
