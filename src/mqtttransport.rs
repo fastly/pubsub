@@ -6,7 +6,7 @@ use crate::websocket::{parse_websocket_event, ControlMessage, WsEvent};
 use fastly::http::{HeaderValue, StatusCode};
 use fastly::{Body, Request, Response};
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::Write;
 use std::mem;
 use std::str;
 
@@ -14,10 +14,15 @@ struct Context<'a> {
     handler_ctx: mqtthandler::Context<'a>,
     cid: String,
     in_buf: Vec<u8>,
+    content_accepted: usize,
 }
 
-fn handle_websocket_event(ctx: &mut Context, e: WsEvent) -> Vec<WsEvent> {
+fn handle_websocket_event<H>(ctx: &mut Context, e: WsEvent, mut handler: H) -> Vec<WsEvent>
+where
+    H: for<'a> FnMut(&mut mqtthandler::Context, Packet<'a>) -> Vec<Packet<'a>>,
+{
     let mut out_events = Vec::new();
+    let mut content_accepted = e.content.len();
 
     println!("{} event {} size={}", ctx.cid, e.etype, e.content.len());
 
@@ -25,6 +30,8 @@ fn handle_websocket_event(ctx: &mut Context, e: WsEvent) -> Vec<WsEvent> {
         "OPEN" => out_events.push(e.clone()),  // ack
         "CLOSE" => out_events.push(e.clone()), // ack
         "TEXT" | "BINARY" => {
+            content_accepted = 0;
+
             let mut in_buf = mem::take(&mut ctx.in_buf);
 
             in_buf.extend(e.content);
@@ -40,7 +47,7 @@ fn handle_websocket_event(ctx: &mut Context, e: WsEvent) -> Vec<WsEvent> {
 
                 println!("{} IN {:?}", ctx.cid, p);
 
-                for p in mqtthandler::handle_packet(&mut ctx.handler_ctx, p) {
+                for p in handler(&mut ctx.handler_ctx, p) {
                     println!("{} OUT {:?}", ctx.cid, p);
 
                     let mut buf = Vec::new();
@@ -57,12 +64,15 @@ fn handle_websocket_event(ctx: &mut Context, e: WsEvent) -> Vec<WsEvent> {
                 }
 
                 in_buf = in_buf.split_off(read);
+                content_accepted += read;
             }
 
             ctx.in_buf = in_buf;
         }
         _ => {} // unsupported event type, ignore
     }
+
+    ctx.content_accepted += content_accepted;
 
     out_events
 }
@@ -71,63 +81,18 @@ fn bad_request<T: AsRef<str>>(message: T) -> Response {
     Response::from_status(400).with_body_text_plain(&format!("{}\n", message.as_ref()))
 }
 
-fn escape_header(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-
-    for &b in data {
-        if b < 0x20 || b == b'\\' || b == b',' || b == 0x7f {
-            write!(&mut out, "\\x{:02x}", b).unwrap();
-        } else {
-            out.push(b);
-        }
-    }
-
-    out
-}
-
-fn unescape_header(value: &[u8]) -> Result<Vec<u8>, io::Error> {
-    let mut out = Vec::new();
-
-    let mut pos = 0;
-
-    while pos < value.len() {
-        let b = value[pos];
-
-        if b == b'\\' {
-            pos += 1;
-
-            if value[pos] != b'x' || pos + 2 >= value.len() {
-                return Err(io::ErrorKind::InvalidData.into());
-            }
-
-            let Ok(s) = str::from_utf8(&value[(pos + 1)..(pos + 3)]) else {
-                return Err(io::ErrorKind::InvalidData.into());
-            };
-
-            let Ok(v) = u8::from_str_radix(s, 16) else {
-                return Err(io::ErrorKind::InvalidData.into());
-            };
-
-            out.push(v);
-            pos += 3;
-        } else {
-            out.push(b);
-            pos += 1;
-        }
-    }
-
-    Ok(out)
-}
-
-fn handle_websocket_events(
+fn handle_websocket_events<H>(
     config: &Config,
     authorizor: &dyn Authorizor,
     req: Request,
     body: Vec<u8>,
-) -> Response {
+    mut handler: H,
+) -> Response
+where
+    H: for<'a> FnMut(&mut mqtthandler::Context, Packet<'a>) -> Vec<Packet<'a>>,
+{
     let mut grip_offered = false;
     let mut cid = String::new();
-    let mut in_buf = Vec::new();
     let mut state = mqtthandler::State::default();
     let mut connected_subs = HashSet::new();
 
@@ -149,13 +114,6 @@ fn handle_websocket_events(
         }
     }
 
-    if let Some(v) = req.get_header("Meta-Buf") {
-        match unescape_header(v.as_bytes()) {
-            Ok(v) => in_buf.extend(v),
-            Err(_) => return bad_request("Invalid header"),
-        }
-    }
-
     if let Some(v) = req.get_header("Meta-State") {
         match serde_json::from_slice(v.as_bytes()) {
             Ok(v) => state = v,
@@ -165,7 +123,19 @@ fn handle_websocket_events(
         connected_subs = state.subs.clone();
     }
 
-    println!("{} using {} saved bytes", cid, in_buf.len());
+    let mut replayed = 0;
+
+    if let Some(v) = req.get_header("Content-Bytes-Replayed") {
+        match v.to_str() {
+            Ok(s) => match s.parse() {
+                Ok(x) => replayed = x,
+                Err(_) => return bad_request("Invalid header"),
+            },
+            Err(_) => return bad_request("Invalid header"),
+        }
+    }
+
+    println!("{} receiving {} replayed bytes", cid, replayed);
 
     let mut events = Vec::new();
     let mut pos = 0;
@@ -188,13 +158,16 @@ fn handle_websocket_events(
             state,
         },
         cid,
-        in_buf,
+        in_buf: Vec::new(),
+        content_accepted: 0,
     };
 
     let mut out_events = Vec::new();
 
     for e in events {
-        out_events.extend(handle_websocket_event(&mut ctx, e));
+        out_events.extend(handle_websocket_event(&mut ctx, e, |ctx, p| {
+            handler(ctx, p)
+        }));
     }
 
     for sub in &ctx.handler_ctx.state.subs {
@@ -255,9 +228,9 @@ fn handle_websocket_events(
         resp.append_header("Sec-WebSocket-Protocol", "mqtt");
     }
 
-    println!("{} saving {} bytes", ctx.cid, ctx.in_buf.len());
+    println!("{} accepting {} bytes", ctx.cid, ctx.content_accepted);
 
-    resp.append_header("Set-Meta-Buf", escape_header(&ctx.in_buf));
+    resp.append_header("Content-Bytes-Accepted", ctx.content_accepted.to_string());
 
     let state = serde_json::to_string(&ctx.handler_ctx.state).unwrap();
     resp.append_header("Set-Meta-State", state);
@@ -271,8 +244,85 @@ pub fn post(config: &Config, authorizor: &dyn Authorizor, mut req: Request) -> R
     if req.get_header("Content-Type")
         == Some(&HeaderValue::from_static("application/websocket-events"))
     {
-        handle_websocket_events(config, authorizor, req, body)
+        handle_websocket_events(config, authorizor, req, body, mqtthandler::handle_packet)
     } else {
         Response::from_status(StatusCode::NOT_ACCEPTABLE).with_body_text_plain("Not Acceptable\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::TestAuthorizor;
+    use crate::config::Config;
+    use crate::mqttpacket::Publish;
+    use std::borrow::Cow;
+    use std::io::Write;
+
+    #[test]
+    fn handle_events() {
+        let config = Config::default();
+        let authorizor = TestAuthorizor;
+
+        let p = Publish {
+            topic: Cow::from("fruit"),
+            message: Cow::from("apple".as_bytes()),
+        };
+
+        let mut packet_bytes = Vec::new();
+        Packet::Publish(p).serialize(&mut packet_bytes).unwrap();
+
+        let part1 = &packet_bytes[..7];
+        let part2 = &packet_bytes[7..];
+
+        let mut body = Vec::new();
+        write!(&mut body, "BINARY {:x}\r\n", part1.len()).unwrap();
+        body.write_all(&part1).unwrap();
+        write!(&mut body, "\r\n").unwrap();
+
+        {
+            let req = Request::post("http://localhost/path");
+
+            let mut out = None;
+            let resp = handle_websocket_events(&config, &authorizor, req, body.clone(), |_, p| {
+                if let Packet::Publish(p) = &p {
+                    out = Some(Publish {
+                        topic: Cow::from(p.topic.clone().into_owned()),
+                        message: Cow::from(p.message.clone().into_owned()),
+                    });
+                }
+
+                Vec::new()
+            });
+            assert_eq!(resp.get_status(), StatusCode::OK);
+            assert_eq!(resp.get_header_str("Content-Bytes-Accepted"), Some("0"));
+            assert!(out.is_none());
+        }
+
+        write!(&mut body, "BINARY {:x}\r\n", part2.len()).unwrap();
+        body.write_all(&part2).unwrap();
+        write!(&mut body, "\r\n").unwrap();
+
+        {
+            let req = Request::post("http://localhost/path")
+                .with_header("Content-Bytes-Replayed", part1.len().to_string());
+
+            let mut out = None;
+            let resp = handle_websocket_events(&config, &authorizor, req, body, |_, p| {
+                if let Packet::Publish(p) = &p {
+                    out = Some(Publish {
+                        topic: Cow::from(p.topic.clone().into_owned()),
+                        message: Cow::from(p.message.clone().into_owned()),
+                    });
+                }
+
+                Vec::new()
+            });
+            assert_eq!(resp.get_status(), StatusCode::OK);
+            assert_eq!(resp.get_header_str("Content-Bytes-Accepted"), Some("15"));
+            let out = out.unwrap();
+            assert_eq!(out.topic, "fruit");
+            assert_eq!(out.message, "apple".as_bytes());
+        }
     }
 }
