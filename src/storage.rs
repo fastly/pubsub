@@ -19,6 +19,7 @@ pub enum StorageError {
     KVStore(KVStoreError),
 }
 
+#[derive(Copy, Clone)]
 pub struct RetainedVersion {
     pub generation: u64,
     pub seq: u64,
@@ -72,7 +73,11 @@ pub trait Storage {
         ttl: Option<Duration>,
     ) -> Result<RetainedVersion, StorageError>;
 
-    fn read_retained(&self, topic: &str) -> Result<Option<RetainedSlot>, StorageError>;
+    fn read_retained(
+        &self,
+        topic: &str,
+        after: Option<RetainedVersion>,
+    ) -> Result<Option<RetainedSlot>, StorageError>;
 }
 
 pub struct KVStoreStorage {
@@ -163,7 +168,11 @@ impl Storage for KVStoreStorage {
         Ok(version)
     }
 
-    fn read_retained(&self, topic: &str) -> Result<Option<RetainedSlot>, StorageError> {
+    fn read_retained(
+        &self,
+        topic: &str,
+        after: Option<RetainedVersion>,
+    ) -> Result<Option<RetainedSlot>, StorageError> {
         let store = match KVStore::open(&self.store_name) {
             Ok(Some(store)) => store,
             Ok(None) => return Err(StorageError::StoreNotFound),
@@ -176,6 +185,12 @@ impl Storage for KVStoreStorage {
             Some(ret) => ret,
             None => return Ok(None),
         };
+
+        if let Some(after) = after {
+            if meta.generation == after.generation && meta.seq <= after.seq {
+                return Ok(None);
+            }
+        }
 
         let version = RetainedVersion {
             generation: meta.generation,
@@ -213,14 +228,20 @@ mod tests {
     fn retained() {
         let storage = KVStoreStorage::new("messages");
 
-        assert!(storage.read_retained("storage-test").unwrap().is_none());
+        assert!(storage
+            .read_retained("storage-test", None)
+            .unwrap()
+            .is_none());
 
         let v1 = storage
             .write_retained("storage-test", "hello".as_bytes(), None)
             .unwrap();
         assert_eq!(v1.seq, 1);
 
-        let s = storage.read_retained("storage-test").unwrap().unwrap();
+        let s = storage
+            .read_retained("storage-test", None)
+            .unwrap()
+            .unwrap();
         assert_eq!(s.version.generation, v1.generation);
         assert_eq!(s.version.seq, 1);
         let m = s.message.unwrap();
@@ -237,13 +258,22 @@ mod tests {
         assert_eq!(v2.generation, v1.generation);
         assert_eq!(v2.seq, 2);
 
-        let s = storage.read_retained("storage-test").unwrap().unwrap();
+        let s = storage
+            .read_retained("storage-test", None)
+            .unwrap()
+            .unwrap();
         assert_eq!(s.version.generation, v2.generation);
         assert_eq!(s.version.seq, 2);
         let m = s.message.unwrap();
         let ttl = m.ttl.unwrap();
         assert!(ttl <= Duration::from_secs(60));
         assert_eq!(str::from_utf8(&m.data).unwrap(), "world");
+
+        // none after
+        assert!(storage
+            .read_retained("storage-test", Some(s.version))
+            .unwrap()
+            .is_none());
 
         // delete item so next write gets a new generation
         KVStore::open(&storage.store_name)

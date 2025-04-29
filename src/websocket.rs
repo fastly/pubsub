@@ -13,6 +13,15 @@ pub struct ControlMessage {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 fn find_byte(haystack: &[u8], needle: u8) -> Option<usize> {

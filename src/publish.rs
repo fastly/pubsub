@@ -3,7 +3,6 @@ use base64::Engine;
 use fastly::error::anyhow;
 use fastly::http::{header, StatusCode};
 use fastly::{Error, Request};
-use std::borrow::Cow;
 use std::env;
 use std::fmt::Write;
 use std::str;
@@ -11,13 +10,28 @@ use std::str;
 // allow 256 bytes of protocol overhead
 pub const MESSAGE_SIZE_MAX: usize = 32_768 - 256;
 
-pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error> {
+pub struct Sequencing {
+    pub id: String,
+    pub prev_id: String,
+}
+
+pub fn publish(
+    api_token: &str,
+    topic: &str,
+    message: &[u8],
+    sequencing: Option<Sequencing>,
+    sender: Option<&str>,
+) -> Result<(), Error> {
     let service_id = env::var("FASTLY_SERVICE_ID").unwrap();
 
     let sse_content = match str::from_utf8(message) {
         Ok(s) => {
             let mut content = String::new();
             content.push_str("event: message\n");
+
+            if let Some(seq) = &sequencing {
+                content.write_fmt(format_args!("id: {}\n", seq.id)).unwrap();
+            }
 
             for line in s.split('\n') {
                 content.write_fmt(format_args!("data: {line}\n")).unwrap();
@@ -31,7 +45,13 @@ pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error
             let encoded = base64::prelude::BASE64_STANDARD.encode(message);
 
             let mut content = String::new();
-            content.push_str("event: message-base64\ndata: ");
+            content.push_str("event: message-base64\n");
+
+            if let Some(seq) = &sequencing {
+                content.write_fmt(format_args!("id: {}\n", seq.id)).unwrap();
+            }
+
+            content.push_str("data: ");
             content.push_str(&encoded);
             content.push_str("\n\n");
 
@@ -39,30 +59,55 @@ pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error
         }
     };
 
-    let mqtt_content = {
-        let mut v = Vec::new();
-        Packet::Publish(Publish {
-            topic: Cow::from(topic),
-            message: Cow::from(message),
-            retain: false,
+    let mut item = if let Some(seq) = sequencing {
+        serde_json::json!({
+            "channel": format!("d:{topic}"),
+            "id": seq.id,
+            "prev-id": seq.prev_id,
+            "formats": {
+                "http-stream": {
+                    "content": sse_content
+                },
+                "ws-message": {
+                    "action": "refresh" // currently the only way to reliably deliver over websockets
+                }
+            }
         })
-        .serialize(&mut v)?;
+    } else {
+        let mqtt_content = {
+            let mut v = Vec::new();
+            Packet::Publish(Publish {
+                topic: topic.into(),
+                message: message.into(),
+                retain: false,                 // always false for non-durable
+                message_expiry_interval: None, // always none for non-durable
+            })
+            .serialize(&mut v)?;
 
-        base64::prelude::BASE64_STANDARD.encode(v)
-    };
+            base64::prelude::BASE64_STANDARD.encode(v)
+        };
 
-    let body = serde_json::json!({
-        "items": [{
+        serde_json::json!({
             "channel": format!("s:{topic}"),
             "formats": {
                 "http-stream": {
-                    "content": sse_content,
+                    "content": sse_content
                 },
                 "ws-message": {
-                    "content-bin": mqtt_content,
-                },
-            },
-        }],
+                    "content-bin": mqtt_content
+                }
+            }
+        })
+    };
+
+    if let Some(sender) = sender {
+        item["meta"] = serde_json::json!({
+            "sender": sender,
+        });
+    }
+
+    let body = serde_json::json!({
+        "items": [item],
     });
 
     let body = body.to_string();
