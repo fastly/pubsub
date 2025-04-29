@@ -2,9 +2,13 @@ use fastly::kv_store::{InsertMode, KVStoreError, LookupResponse};
 use fastly::KVStore;
 use std::time::Duration;
 
-const KV_STORE_MAX_AGE_SECS: u64 = 60 * 60;
-const TTL_EXTEND: Duration =
-    Duration::from_secs(KV_STORE_MAX_AGE_SECS + (KV_STORE_MAX_AGE_SECS / 2));
+// the amount of time to wait before deleting an item after its expiration
+// is reached. keeping expired items around allows their sequencing
+// information to be reused if they are later updated prior to deletion.
+// this helps reduce the chance of sequences restarting, which can be
+// disruptive to message delivery.
+const LINGER: Duration = Duration::from_secs(60 * 60 * 24);
+
 const WRITE_TRIES_MAX: usize = 5;
 
 #[derive(Debug)]
@@ -125,7 +129,9 @@ impl Storage for KVStoreStorage {
             let insert = insert.metadata(&meta_json);
 
             let insert = if let Some(ttl) = ttl {
-                insert.time_to_live(ttl + TTL_EXTEND)
+                // we set a TTL longer than the item's expiration time, to
+                // allow the opportunity to reuse the item after expiration
+                insert.time_to_live(ttl + LINGER)
             } else {
                 insert
             };
@@ -173,7 +179,8 @@ impl Storage for KVStoreStorage {
             let now = time::UtcDateTime::now();
 
             if now >= expires_at {
-                // ignore the value until it gets cleaned up
+                // the item is expired but not yet deleted. we'll pretend it
+                // doesn't exist
                 return Ok(None);
             }
 
