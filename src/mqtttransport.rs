@@ -267,6 +267,7 @@ mod tests {
         let p = Publish {
             topic: Cow::from("fruit"),
             message: Cow::from("apple".as_bytes()),
+            retain: false,
         };
 
         let mut packet_bytes = Vec::new();
@@ -289,6 +290,7 @@ mod tests {
                     out = Some(Publish {
                         topic: Cow::from(p.topic.clone().into_owned()),
                         message: Cow::from(p.message.clone().into_owned()),
+                        retain: false,
                     });
                 }
 
@@ -313,6 +315,7 @@ mod tests {
                     out = Some(Publish {
                         topic: Cow::from(p.topic.clone().into_owned()),
                         message: Cow::from(p.message.clone().into_owned()),
+                        retain: false,
                     });
                 }
 

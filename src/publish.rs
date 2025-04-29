@@ -44,6 +44,7 @@ pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error
         Packet::Publish(Publish {
             topic: Cow::from(topic),
             message: Cow::from(message),
+            retain: false,
         })
         .serialize(&mut v)?;
 
