@@ -24,10 +24,14 @@ pub struct RetainedVersion {
     pub seq: u64,
 }
 
-pub struct Retained {
-    pub version: RetainedVersion,
+pub struct RetainedMessage {
     pub ttl: Option<Duration>,
-    pub message: Vec<u8>,
+    pub data: Vec<u8>,
+}
+
+pub struct RetainedSlot {
+    pub version: RetainedVersion,
+    pub message: Option<RetainedMessage>,
 }
 
 #[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -68,7 +72,7 @@ pub trait Storage {
         ttl: Option<Duration>,
     ) -> Result<RetainedVersion, StorageError>;
 
-    fn read_retained(&self, topic: &str) -> Result<Option<Retained>, StorageError>;
+    fn read_retained(&self, topic: &str) -> Result<Option<RetainedSlot>, StorageError>;
 }
 
 pub struct KVStoreStorage {
@@ -159,7 +163,7 @@ impl Storage for KVStoreStorage {
         Ok(version)
     }
 
-    fn read_retained(&self, topic: &str) -> Result<Option<Retained>, StorageError> {
+    fn read_retained(&self, topic: &str) -> Result<Option<RetainedSlot>, StorageError> {
         let store = match KVStore::open(&self.store_name) {
             Ok(Some(store)) => store,
             Ok(None) => return Err(StorageError::StoreNotFound),
@@ -173,30 +177,30 @@ impl Storage for KVStoreStorage {
             None => return Ok(None),
         };
 
-        let mut ttl = None;
+        let version = RetainedVersion {
+            generation: meta.generation,
+            seq: meta.seq,
+        };
 
-        if let Some(expires_at) = meta.expires_at {
+        let ttl = meta.expires_at.map(|expires_at| {
             let now = time::UtcDateTime::now();
 
-            if now >= expires_at {
-                // the item is expired but not yet deleted. we'll pretend it
-                // doesn't exist
-                return Ok(None);
+            if now < expires_at {
+                (expires_at - now).unsigned_abs()
+            } else {
+                Duration::from_millis(0)
             }
+        });
 
-            ttl = Some((expires_at - now).unsigned_abs());
-        }
+        let message = if ttl != Some(Duration::from_millis(0)) {
+            let value = lookup.take_body_bytes();
 
-        let value = lookup.take_body_bytes();
+            Some(RetainedMessage { ttl, data: value })
+        } else {
+            None
+        };
 
-        Ok(Some(Retained {
-            version: RetainedVersion {
-                generation: meta.generation,
-                seq: meta.seq,
-            },
-            ttl,
-            message: value,
-        }))
+        Ok(Some(RetainedSlot { version, message }))
     }
 }
 
@@ -216,11 +220,12 @@ mod tests {
             .unwrap();
         assert_eq!(v1.seq, 1);
 
-        let r = storage.read_retained("storage-test").unwrap().unwrap();
-        assert_eq!(r.version.generation, v1.generation);
-        assert_eq!(r.version.seq, 1);
-        assert!(r.ttl.is_none());
-        assert_eq!(str::from_utf8(&r.message).unwrap(), "hello");
+        let s = storage.read_retained("storage-test").unwrap().unwrap();
+        assert_eq!(s.version.generation, v1.generation);
+        assert_eq!(s.version.seq, 1);
+        let m = s.message.unwrap();
+        assert!(m.ttl.is_none());
+        assert_eq!(str::from_utf8(&m.data).unwrap(), "hello");
 
         let v2 = storage
             .write_retained(
@@ -232,12 +237,13 @@ mod tests {
         assert_eq!(v2.generation, v1.generation);
         assert_eq!(v2.seq, 2);
 
-        let r = storage.read_retained("storage-test").unwrap().unwrap();
-        assert_eq!(r.version.generation, v2.generation);
-        assert_eq!(r.version.seq, 2);
-        let ttl = r.ttl.unwrap();
+        let s = storage.read_retained("storage-test").unwrap().unwrap();
+        assert_eq!(s.version.generation, v2.generation);
+        assert_eq!(s.version.seq, 2);
+        let m = s.message.unwrap();
+        let ttl = m.ttl.unwrap();
         assert!(ttl <= Duration::from_secs(60));
-        assert_eq!(str::from_utf8(&r.message).unwrap(), "world");
+        assert_eq!(str::from_utf8(&m.data).unwrap(), "world");
 
         // delete item so next write gets a new generation
         KVStore::open(&storage.store_name)
