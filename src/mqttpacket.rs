@@ -91,6 +91,7 @@ pub struct Connect<'a> {
 #[derive(Debug)]
 pub struct ConnAck {
     pub reason: Reason,
+    pub maximum_packet_size: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -111,6 +112,10 @@ pub struct PingResp;
 pub struct Subscribe<'a> {
     pub id: u16,
     pub topic: &'a str,
+    pub maximum_qos: u8,
+    pub no_local: bool,
+    pub retain_as_published: bool,
+    pub retain_handling: u8,
 }
 
 #[derive(Debug)]
@@ -135,6 +140,7 @@ pub struct UnsubAck {
 pub struct Publish<'a> {
     pub topic: Cow<'a, str>,
     pub message: Cow<'a, [u8]>,
+    pub retain: bool,
 }
 
 #[derive(Debug)]
@@ -308,6 +314,8 @@ impl<'a> Packet<'a> {
                     return Some(Err(io::ErrorKind::InvalidData.into()));
                 }
 
+                let retain = flags & 0x01 > 0;
+
                 let (topic, read) = match parse_string(src) {
                     Ok(s) => s,
                     Err(e) => return Some(Err(e)),
@@ -333,6 +341,7 @@ impl<'a> Packet<'a> {
                 Self::Publish(Publish {
                     topic: Cow::from(topic),
                     message: Cow::from(message),
+                    retain,
                 })
             }
             8 => {
@@ -364,12 +373,32 @@ impl<'a> Packet<'a> {
 
                 let src = &src[props_len..];
 
-                let (topic, _) = match parse_string(src) {
+                let (topic, read) = match parse_string(src) {
                     Ok(s) => s,
                     Err(e) => return Some(Err(e)),
                 };
 
-                Self::Subscribe(Subscribe { id, topic })
+                let src = &src[read..];
+
+                if src.is_empty() {
+                    return Some(Err(io::ErrorKind::InvalidData.into()));
+                }
+
+                let opts = src[0];
+
+                let maximum_qos = opts & 0x03;
+                let no_local = opts & 0x04 != 0;
+                let retain_as_published = opts & 0x08 != 0;
+                let retain_handling = (opts >> 4) & 0x03;
+
+                Self::Subscribe(Subscribe {
+                    id,
+                    topic,
+                    maximum_qos,
+                    no_local,
+                    retain_as_published,
+                    retain_handling,
+                })
             }
             10 => {
                 if src.len() < 2 {
@@ -414,13 +443,38 @@ impl<'a> Packet<'a> {
         let mut out = Vec::new();
 
         match self {
-            Self::ConnAck(ConnAck { reason }) => {
+            Self::ConnAck(p) => {
+                let mut props = vec![
+                    0x24, // maximum qos
+                    0x00, // QoS 0
+                    0x25, // retain available
+                    0x01, // yes
+                ];
+
+                if let Some(x) = p.maximum_packet_size {
+                    // maximum packet size
+                    props.push(0x27);
+                    props.extend(x.to_be_bytes());
+                }
+
+                // wildcard subscription available
+                props.push(0x28);
+                props.push(0x00); // no
+
+                // shared subscription available
+                props.push(0x2a);
+                props.push(0x00); // no
+
+                let mut props_with_len = Vec::new();
+                write_int(&mut props_with_len, props.len() as u32)?; // property length
+                props_with_len.extend(&props);
+
                 out.push(0x20); // type=2 flags=0
-                write_int(&mut out, 3)?; // remaining length
+                write_int(&mut out, (props_with_len.len() + 2) as u32)?; // remaining length
 
                 out.push(0x00); // acknowledge flags
-                out.push(*reason as u8);
-                write_int(&mut out, 0)?; // property length
+                out.push(p.reason as u8);
+                out.extend(&props_with_len);
             }
             Self::ConnAckV4(ConnAckV4 { ret }) => {
                 out.push(0x20); // type=2 flags=0
@@ -449,17 +503,23 @@ impl<'a> Packet<'a> {
                 write_int(&mut out, 0)?; // property length
                 out.push(*reason as u8);
             }
-            Self::Publish(Publish { topic, message }) => {
-                out.push(0x30); // type=3 flags=0
+            Self::Publish(p) => {
+                let mut flags = 0;
 
-                let len = (topic.len() + 3 + message.len()) as u32;
+                if p.retain {
+                    flags |= 0x01;
+                }
+
+                out.push(0x30 | flags); // type=3
+
+                let len = (p.topic.len() + 3 + p.message.len()) as u32;
                 write_int(&mut out, len)?; // remaining length
 
-                out.extend(&(topic.len() as u16).to_be_bytes());
-                out.extend(topic.as_bytes());
+                out.extend(&(p.topic.len() as u16).to_be_bytes());
+                out.extend(p.topic.as_bytes());
                 write_int(&mut out, 0)?; // property length
 
-                out.extend(message.as_ref());
+                out.extend(p.message.as_ref());
             }
             _ => panic!("cannot serialize type"),
         }
@@ -496,6 +556,7 @@ mod tests {
         let p = Packet::Publish(Publish {
             topic: Cow::from(topic),
             message: Cow::from(message),
+            retain: false,
         });
 
         let mut data = Vec::new();

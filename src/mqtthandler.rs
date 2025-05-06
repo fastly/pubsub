@@ -8,6 +8,8 @@ use crate::publish::{publish, MESSAGE_SIZE_MAX};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+const PACKET_SIZE_MAX: usize = 32_768;
+
 #[derive(Deserialize, Serialize, Default)]
 pub struct State {
     pub connected: bool,
@@ -35,6 +37,7 @@ pub fn handle_connect<'a>(ctx: &mut Context, p: Connect<'a>) -> Vec<Packet<'a>> 
         let out = if p.version > 5 {
             Packet::ConnAck(ConnAck {
                 reason: Reason::UnsupportedProtocolVersion,
+                maximum_packet_size: None,
             })
         } else {
             Packet::ConnAckV4(ConnAckV4 { ret: 0x01 }) // unacceptable protocol version
@@ -48,6 +51,7 @@ pub fn handle_connect<'a>(ctx: &mut Context, p: Connect<'a>) -> Vec<Packet<'a>> 
     if ctx.state.connected {
         return vec![Packet::ConnAck(ConnAck {
             reason: Reason::ProtocolError,
+            maximum_packet_size: None,
         })];
     }
 
@@ -61,6 +65,7 @@ pub fn handle_connect<'a>(ctx: &mut Context, p: Connect<'a>) -> Vec<Packet<'a>> 
 
     vec![Packet::ConnAck(ConnAck {
         reason: Reason::Success,
+        maximum_packet_size: Some(PACKET_SIZE_MAX as u32),
     })]
 }
 
@@ -152,6 +157,7 @@ pub fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> 
             out.push(Packet::Publish(Publish {
                 topic: p.topic,
                 message: p.message,
+                retain: false,
             }));
         }
     }
