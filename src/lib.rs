@@ -7,4 +7,5 @@ pub mod mqttpacket;
 pub mod mqtttransport;
 pub mod publish;
 pub mod routes;
+pub mod storage;
 pub mod websocket;
