@@ -32,7 +32,7 @@ pub struct Context<'a> {
     pub state: State,
 }
 
-pub fn handle_connect<'a>(ctx: &mut Context, p: Connect<'a>) -> Vec<Packet<'a>> {
+fn handle_connect<'a>(ctx: &mut Context, p: Connect<'a>) -> Vec<Packet<'a>> {
     if p.version != 5 {
         let out = if p.version > 5 {
             Packet::ConnAck(ConnAck {
@@ -69,17 +69,17 @@ pub fn handle_connect<'a>(ctx: &mut Context, p: Connect<'a>) -> Vec<Packet<'a>> 
     })]
 }
 
-pub fn handle_disconnect(ctx: &mut Context, _p: Disconnect) -> Vec<Packet<'static>> {
+fn handle_disconnect(ctx: &mut Context, _p: Disconnect) -> Vec<Packet<'static>> {
     ctx.state.clear();
 
     vec![]
 }
 
-pub fn handle_pingreq(_ctx: &mut Context, _p: PingReq) -> Vec<Packet<'static>> {
+fn handle_pingreq(_ctx: &mut Context, _p: PingReq) -> Vec<Packet<'static>> {
     vec![Packet::PingResp(PingResp)]
 }
 
-pub fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'a>> {
+fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'a>> {
     if p.topic.is_empty() {
         return vec![Packet::SubAck(SubAck {
             id: p.id,
@@ -116,7 +116,7 @@ pub fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'
     vec![Packet::SubAck(SubAck { id: p.id, reason })]
 }
 
-pub fn handle_unsubscribe<'a>(ctx: &mut Context, p: Unsubscribe<'a>) -> Vec<Packet<'a>> {
+fn handle_unsubscribe<'a>(ctx: &mut Context, p: Unsubscribe<'a>) -> Vec<Packet<'a>> {
     let reason = if ctx.state.subs.contains(p.topic) {
         ctx.state.subs.remove(p.topic);
 
@@ -128,10 +128,21 @@ pub fn handle_unsubscribe<'a>(ctx: &mut Context, p: Unsubscribe<'a>) -> Vec<Pack
     vec![Packet::UnsubAck(UnsubAck { id: p.id, reason })]
 }
 
-pub fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> {
+fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> {
     if p.topic.starts_with('$') {
         // don't accept publishes to topics beginning with $, per the spec
         return vec![];
+    }
+
+    // QoS must be 0
+    if p.qos > 0 {
+        let out = vec![Packet::Disconnect(Disconnect {
+            reason: Reason::QoSNotSupported,
+        })];
+
+        ctx.disconnect = true;
+
+        return out;
     }
 
     let mut allowed = false;
@@ -157,7 +168,10 @@ pub fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> 
             out.push(Packet::Publish(Publish {
                 topic: p.topic,
                 message: p.message,
+                dup: false,
+                qos: 0,
                 retain: false,
+                message_expiry_interval: None,
             }));
         }
     }
