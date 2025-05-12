@@ -78,7 +78,30 @@ pub enum Reason {
     ProtocolError = 0x82,
     UnsupportedProtocolVersion = 0x84,
     NotAuthorized = 0x87,
+    QoSNotSupported = 0x9b,
     WildcardSubscriptionsNotSupported = 0xa2,
+}
+
+impl TryFrom<u8> for Reason {
+    type Error = ();
+
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            x if x == Self::Success as u8 => Ok(Self::Success),
+            x if x == Self::NoSubscriptionExisted as u8 => Ok(Self::NoSubscriptionExisted),
+            x if x == Self::UnspecifiedError as u8 => Ok(Self::UnspecifiedError),
+            x if x == Self::ProtocolError as u8 => Ok(Self::ProtocolError),
+            x if x == Self::UnsupportedProtocolVersion as u8 => {
+                Ok(Self::UnsupportedProtocolVersion)
+            }
+            x if x == Self::NotAuthorized as u8 => Ok(Self::NotAuthorized),
+            x if x == Self::QoSNotSupported as u8 => Ok(Self::QoSNotSupported),
+            x if x == Self::WildcardSubscriptionsNotSupported as u8 => {
+                Ok(Self::WildcardSubscriptionsNotSupported)
+            }
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -100,7 +123,9 @@ pub struct ConnAckV4 {
 }
 
 #[derive(Debug)]
-pub struct Disconnect;
+pub struct Disconnect {
+    pub reason: Reason,
+}
 
 #[derive(Debug)]
 pub struct PingReq;
@@ -140,7 +165,10 @@ pub struct UnsubAck {
 pub struct Publish<'a> {
     pub topic: Cow<'a, str>,
     pub message: Cow<'a, [u8]>,
+    pub dup: bool,
+    pub qos: u8,
     pub retain: bool,
+    pub message_expiry_interval: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -309,12 +337,9 @@ impl<'a> Packet<'a> {
                 })
             }
             3 => {
-                // QoS must be 0
-                if flags & 0x06 > 0 {
-                    return Some(Err(io::ErrorKind::InvalidData.into()));
-                }
-
                 let retain = flags & 0x01 > 0;
+                let qos = (flags >> 1) & 0x03;
+                let dup = flags & 0x08 > 0;
 
                 let (topic, read) = match parse_string(src) {
                     Ok(s) => s,
@@ -336,12 +361,112 @@ impl<'a> Packet<'a> {
                     return Some(Err(io::ErrorKind::InvalidData.into()));
                 }
 
+                let mut message_expiry_interval = None;
+
+                let mut psrc = &src[..props_len];
+                while !psrc.is_empty() {
+                    match psrc[0] {
+                        0x01 => {
+                            // payload format
+
+                            if psrc.len() < 2 {
+                                return Some(Err(io::ErrorKind::InvalidData.into()));
+                            }
+
+                            psrc = &psrc[2..];
+                        }
+                        0x02 => {
+                            // message expiry interval
+
+                            if psrc.len() < 5 {
+                                return Some(Err(io::ErrorKind::InvalidData.into()));
+                            }
+
+                            message_expiry_interval =
+                                Some(u32::from_be_bytes(psrc[1..5].try_into().unwrap()));
+
+                            psrc = &psrc[5..];
+                        }
+                        0x23 => {
+                            // topic alias
+
+                            if psrc.len() < 3 {
+                                return Some(Err(io::ErrorKind::InvalidData.into()));
+                            }
+
+                            psrc = &psrc[3..];
+                        }
+                        0x08 => {
+                            // response topic
+
+                            let (_, read) = match parse_string(&psrc[1..]) {
+                                Ok(s) => s,
+                                Err(e) => return Some(Err(e)),
+                            };
+
+                            psrc = &psrc[(1 + read)..];
+                        }
+                        0x09 => {
+                            // correlation data
+
+                            let (_, read) = match parse_binary(&psrc[1..]) {
+                                Ok(s) => s,
+                                Err(e) => return Some(Err(e)),
+                            };
+
+                            psrc = &psrc[(1 + read)..];
+                        }
+                        0x26 => {
+                            // user property
+
+                            let (_, read) = match parse_string(&psrc[1..]) {
+                                Ok(s) => s,
+                                Err(e) => return Some(Err(e)),
+                            };
+
+                            psrc = &psrc[(1 + read)..];
+
+                            let (_, read) = match parse_string(psrc) {
+                                Ok(s) => s,
+                                Err(e) => return Some(Err(e)),
+                            };
+
+                            psrc = &psrc[read..];
+                        }
+                        0x0b => {
+                            // subscription identifier
+
+                            let (_, read) = match parse_int(&psrc[1..]) {
+                                Some(Ok(ret)) => ret,
+                                Some(Err(e)) => return Some(Err(e)),
+                                None => return Some(Err(io::ErrorKind::InvalidData.into())),
+                            };
+
+                            psrc = &psrc[(1 + read)..];
+                        }
+                        0x03 => {
+                            // content type
+
+                            let (_, read) = match parse_string(&psrc[1..]) {
+                                Ok(s) => s,
+                                Err(e) => return Some(Err(e)),
+                            };
+
+                            psrc = &psrc[(1 + read)..];
+                        }
+                        _ => return Some(Err(io::ErrorKind::InvalidData.into())),
+                    }
+                }
+
                 let message = &src[props_len..];
 
                 Self::Publish(Publish {
                     topic: Cow::from(topic),
                     message: Cow::from(message),
+                    dup,
+                    qos,
                     retain,
+                    message_expiry_interval,
                 })
             }
             8 => {
@@ -432,7 +557,30 @@ impl<'a> Packet<'a> {
                 Self::Unsubscribe(Unsubscribe { id, topic })
             }
             12 => Self::PingReq(PingReq),
-            14 => Self::Disconnect(Disconnect),
+            14 => {
+                let (vheader_len, read) = match parse_int(src) {
+                    Some(Ok(ret)) => ret,
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return Some(Err(io::ErrorKind::InvalidData.into())),
+                };
+
+                let vheader_len = vheader_len as usize;
+                let src = &src[read..];
+
+                if src.len() < vheader_len {
+                    return Some(Err(io::ErrorKind::InvalidData.into()));
+                }
+
+                let mut reason = 0;
+
+                if !src.is_empty() {
+                    reason = src[0];
+                }
+
+                Self::Disconnect(Disconnect {
+                    reason: Reason::try_from(reason).unwrap_or(Reason::UnspecifiedError),
+                })
+            }
             ptype => Self::Unsupported(ptype),
         };
 
@@ -504,6 +652,18 @@ impl<'a> Packet<'a> {
                 out.push(*reason as u8);
             }
             Self::Publish(p) => {
+                let mut props = Vec::new();
+
+                if let Some(x) = p.message_expiry_interval {
+                    // message expiry interval
+                    props.push(0x02);
+                    props.extend(x.to_be_bytes());
+                }
+
+                let mut props_with_len = Vec::new();
+                write_int(&mut props_with_len, props.len() as u32)?; // property length
+                props_with_len.extend(&props);
+
                 let mut flags = 0;
 
                 if p.retain {
@@ -517,9 +677,16 @@ impl<'a> Packet<'a> {
 
                 out.extend(&(p.topic.len() as u16).to_be_bytes());
                 out.extend(p.topic.as_bytes());
-                write_int(&mut out, 0)?; // property length
+
+                out.extend(&props_with_len);
 
                 out.extend(p.message.as_ref());
+            }
+            Self::Disconnect(Disconnect { reason }) => {
+                out.push(0xe0); // type 14
+
+                write_int(&mut out, 1)?;
+                out.push(*reason as u8);
             }
             _ => panic!("cannot serialize type"),
         }
@@ -556,7 +723,10 @@ mod tests {
         let p = Packet::Publish(Publish {
             topic: Cow::from(topic),
             message: Cow::from(message),
+            dup: false,
+            qos: 0,
             retain: false,
+            message_expiry_interval: None,
         });
 
         let mut data = Vec::new();
