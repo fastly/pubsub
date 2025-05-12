@@ -5,6 +5,7 @@ use crate::mqttpacket::{
     Subscribe, UnsubAck, Unsubscribe,
 };
 use crate::publish::{publish, MESSAGE_SIZE_MAX};
+use crate::storage::Storage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -28,6 +29,7 @@ impl State {
 pub struct Context<'a> {
     pub config: &'a Config,
     pub authorizor: &'a dyn Authorizor,
+    pub storage: &'a dyn Storage,
     pub disconnect: bool,
     pub state: State,
 }

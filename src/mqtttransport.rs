@@ -2,6 +2,7 @@ use crate::auth::Authorizor;
 use crate::config::Config;
 use crate::mqtthandler;
 use crate::mqttpacket::Packet;
+use crate::storage::Storage;
 use crate::websocket::{parse_websocket_event, ControlMessage, WsEvent};
 use fastly::http::{HeaderValue, StatusCode};
 use fastly::{Body, Request, Response};
@@ -84,6 +85,7 @@ fn bad_request<T: AsRef<str>>(message: T) -> Response {
 fn handle_websocket_events<H>(
     config: &Config,
     authorizor: &dyn Authorizor,
+    storage: &dyn Storage,
     req: Request,
     body: Vec<u8>,
     mut handler: H,
@@ -154,6 +156,7 @@ where
         handler_ctx: mqtthandler::Context {
             config,
             authorizor,
+            storage,
             disconnect: false,
             state,
         },
@@ -238,13 +241,25 @@ where
     resp
 }
 
-pub fn post(config: &Config, authorizor: &dyn Authorizor, mut req: Request) -> Response {
+pub fn post(
+    config: &Config,
+    authorizor: &dyn Authorizor,
+    storage: &dyn Storage,
+    mut req: Request,
+) -> Response {
     let body = req.take_body().into_bytes();
 
     if req.get_header("Content-Type")
         == Some(&HeaderValue::from_static("application/websocket-events"))
     {
-        handle_websocket_events(config, authorizor, req, body, mqtthandler::handle_packet)
+        handle_websocket_events(
+            config,
+            authorizor,
+            storage,
+            req,
+            body,
+            mqtthandler::handle_packet,
+        )
     } else {
         Response::from_status(StatusCode::NOT_ACCEPTABLE).with_body_text_plain("Not Acceptable\n")
     }
@@ -256,13 +271,36 @@ mod tests {
     use crate::auth::TestAuthorizor;
     use crate::config::Config;
     use crate::mqttpacket::Publish;
+    use crate::storage::{RetainedSlot, RetainedVersion, StorageError};
     use std::borrow::Cow;
     use std::io::Write;
+    use std::time::Duration;
+
+    struct TestStorage;
+
+    impl Storage for TestStorage {
+        fn write_retained(
+            &self,
+            _topic: &str,
+            _message: &[u8],
+            _ttl: Option<Duration>,
+        ) -> Result<RetainedVersion, StorageError> {
+            Ok(RetainedVersion {
+                generation: 1,
+                seq: 1,
+            })
+        }
+
+        fn read_retained(&self, _topic: &str) -> Result<Option<RetainedSlot>, StorageError> {
+            Ok(None)
+        }
+    }
 
     #[test]
     fn handle_events() {
         let config = Config::default();
         let authorizor = TestAuthorizor;
+        let storage = TestStorage;
 
         let p = Publish {
             topic: Cow::from("fruit"),
@@ -288,20 +326,27 @@ mod tests {
             let req = Request::post("http://localhost/path");
 
             let mut out = None;
-            let resp = handle_websocket_events(&config, &authorizor, req, body.clone(), |_, p| {
-                if let Packet::Publish(p) = &p {
-                    out = Some(Publish {
-                        topic: Cow::from(p.topic.clone().into_owned()),
-                        message: Cow::from(p.message.clone().into_owned()),
-                        dup: false,
-                        qos: 0,
-                        retain: false,
-                        message_expiry_interval: None,
-                    });
-                }
+            let resp = handle_websocket_events(
+                &config,
+                &authorizor,
+                &storage,
+                req,
+                body.clone(),
+                |_, p| {
+                    if let Packet::Publish(p) = &p {
+                        out = Some(Publish {
+                            topic: Cow::from(p.topic.clone().into_owned()),
+                            message: Cow::from(p.message.clone().into_owned()),
+                            dup: false,
+                            qos: 0,
+                            retain: false,
+                            message_expiry_interval: None,
+                        });
+                    }
 
-                Vec::new()
-            });
+                    Vec::new()
+                },
+            );
             assert_eq!(resp.get_status(), StatusCode::OK);
             assert_eq!(resp.get_header_str("Content-Bytes-Accepted"), Some("0"));
             assert!(out.is_none());
@@ -316,20 +361,21 @@ mod tests {
                 .with_header("Content-Bytes-Replayed", part1.len().to_string());
 
             let mut out = None;
-            let resp = handle_websocket_events(&config, &authorizor, req, body, |_, p| {
-                if let Packet::Publish(p) = &p {
-                    out = Some(Publish {
-                        topic: Cow::from(p.topic.clone().into_owned()),
-                        message: Cow::from(p.message.clone().into_owned()),
-                        dup: false,
-                        qos: 0,
-                        retain: false,
-                        message_expiry_interval: None,
-                    });
-                }
+            let resp =
+                handle_websocket_events(&config, &authorizor, &storage, req, body, |_, p| {
+                    if let Packet::Publish(p) = &p {
+                        out = Some(Publish {
+                            topic: Cow::from(p.topic.clone().into_owned()),
+                            message: Cow::from(p.message.clone().into_owned()),
+                            dup: false,
+                            qos: 0,
+                            retain: false,
+                            message_expiry_interval: None,
+                        });
+                    }
 
-                Vec::new()
-            });
+                    Vec::new()
+                });
             assert_eq!(resp.get_status(), StatusCode::OK);
             assert_eq!(resp.get_header_str("Content-Bytes-Accepted"), Some("15"));
             let out = out.unwrap();

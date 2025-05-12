@@ -28,6 +28,9 @@ name = "Pub/Sub"
     [setup.kv_stores.keys]
       description = "Store for authentication keys"
 
+    [setup.kv_stores.messages]
+      description = "Store for messages"
+
   [setup.secret_stores]
 
     [setup.secret_stores.secrets]
