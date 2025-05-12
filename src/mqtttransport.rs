@@ -15,6 +15,7 @@ struct Context<'a> {
     handler_ctx: mqtthandler::Context<'a>,
     cid: String,
     in_buf: Vec<u8>,
+    opening: bool,
     content_accepted: usize,
 }
 
@@ -28,7 +29,12 @@ where
     println!("{} event {} size={}", ctx.cid, e.etype, e.content.len());
 
     match e.etype.as_str() {
-        "OPEN" => out_events.push(e.clone()),  // ack
+        "OPEN" => {
+            ctx.opening = true;
+
+            // ack
+            out_events.push(e.clone())
+        }
         "CLOSE" => out_events.push(e.clone()), // ack
         "TEXT" | "BINARY" => {
             content_accepted = 0;
@@ -94,8 +100,10 @@ where
     H: for<'a> FnMut(&mut mqtthandler::Context, Packet<'a>) -> Vec<Packet<'a>>,
 {
     let mut grip_offered = false;
+    let mut protocol_requested = false;
     let mut cid = String::new();
     let mut state = mqtthandler::State::default();
+    let mut client_id = String::new();
     let mut connected_subs = HashSet::new();
 
     if let Some(v) = req.get_header("Sec-WebSocket-Extensions") {
@@ -109,6 +117,17 @@ where
         }
     }
 
+    if let Some(v) = req.get_header("Sec-WebSocket-Protocol") {
+        let protocols = match v.to_str() {
+            Ok(s) => s,
+            Err(_) => return bad_request("Invalid header"),
+        };
+
+        if protocols.split(" ").any(|s| s == "mqtt") {
+            protocol_requested = true;
+        }
+    }
+
     if let Some(v) = req.get_header("Connection-Id") {
         cid = match v.to_str() {
             Ok(s) => s.to_string(),
@@ -119,9 +138,13 @@ where
     if let Some(v) = req.get_header("Meta-State") {
         match serde_json::from_slice(v.as_bytes()) {
             Ok(v) => state = v,
-            Err(_) => return bad_request("Invalid header"),
+            Err(e) => {
+                println!("failed to parse state: {}", e);
+                return bad_request("Invalid header");
+            }
         }
 
+        client_id = state.client_id.clone();
         connected_subs = state.subs.clone();
     }
 
@@ -162,6 +185,7 @@ where
         },
         cid,
         in_buf: Vec::new(),
+        opening: false,
         content_accepted: 0,
     };
 
@@ -173,32 +197,42 @@ where
         }));
     }
 
-    for sub in &ctx.handler_ctx.state.subs {
-        if !connected_subs.contains(sub) {
-            let cmsg = ControlMessage {
-                ctype: "subscribe".to_string(),
-                channel: Some(format!("s:{}", sub)),
-            };
+    let mut cmsgs = Vec::new();
 
-            out_events.push(WsEvent {
-                etype: "TEXT".to_string(),
-                content: format!("c:{}", serde_json::to_string(&cmsg).unwrap()).into_bytes(),
+    if ctx.handler_ctx.state.client_id != client_id {
+        cmsgs.push(ControlMessage {
+            ctype: "set-meta".to_string(),
+            name: Some("user".to_string()),
+            value: Some(ctx.handler_ctx.state.client_id.clone()),
+            ..Default::default()
+        })
+    }
+
+    for topic in &ctx.handler_ctx.state.subs {
+        if !connected_subs.contains(topic) {
+            cmsgs.push(ControlMessage {
+                ctype: "subscribe".to_string(),
+                channel: Some(format!("s:{topic}")),
+                ..Default::default()
             });
         }
     }
 
-    for sub in connected_subs.iter() {
-        if !ctx.handler_ctx.state.subs.contains(sub) {
-            let cmsg = ControlMessage {
+    for topic in connected_subs.iter() {
+        if !ctx.handler_ctx.state.subs.contains(topic.as_str()) {
+            cmsgs.push(ControlMessage {
                 ctype: "unsubscribe".to_string(),
-                channel: Some(format!("s:{}", sub)),
-            };
-
-            out_events.push(WsEvent {
-                etype: "TEXT".to_string(),
-                content: format!("c:{}", serde_json::to_string(&cmsg).unwrap()).into_bytes(),
+                channel: Some(format!("s:{topic}")),
+                ..Default::default()
             });
         }
+    }
+
+    for cmsg in cmsgs {
+        out_events.push(WsEvent {
+            etype: "TEXT".to_string(),
+            content: format!("c:{}", serde_json::to_string(&cmsg).unwrap()).into_bytes(),
+        });
     }
 
     if ctx.handler_ctx.disconnect {
@@ -226,9 +260,14 @@ where
         .with_header("Content-Type", "application/websocket-events")
         .with_body(Body::from(body));
 
-    if grip_offered {
-        resp.append_header("Sec-WebSocket-Extensions", "grip");
-        resp.append_header("Sec-WebSocket-Protocol", "mqtt");
+    if ctx.opening {
+        if grip_offered {
+            resp.append_header("Sec-WebSocket-Extensions", "grip");
+        }
+
+        if protocol_requested {
+            resp.append_header("Sec-WebSocket-Protocol", "mqtt");
+        }
     }
 
     println!("{} accepting {} bytes", ctx.cid, ctx.content_accepted);
@@ -236,6 +275,7 @@ where
     resp.append_header("Content-Bytes-Accepted", ctx.content_accepted.to_string());
 
     let state = serde_json::to_string(&ctx.handler_ctx.state).unwrap();
+    println!("saving state: {state}");
     resp.append_header("Set-Meta-State", state);
 
     resp
