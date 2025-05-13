@@ -1,4 +1,4 @@
-use crate::{admin, auth, config, events, mqtttransport};
+use crate::{admin, auth, config, events, mqtttransport, storage};
 use fastly::http::{header, Method, StatusCode};
 use fastly::{Error, Request, Response};
 
@@ -25,6 +25,7 @@ impl WithCors for Response {
 pub fn handle_request(
     config_source: &dyn config::Source,
     authorizor: &dyn auth::Authorizor,
+    storage: &dyn storage::Storage,
     req: Request,
 ) -> Result<(), Error> {
     let config = match config_source.config() {
@@ -80,7 +81,7 @@ pub fn handle_request(
         }
 
         if req.get_method() == Method::POST {
-            mqtttransport::post(&config, authorizor, req)
+            mqtttransport::post(&config, authorizor, storage, req)
         } else {
             Response::from_status(StatusCode::METHOD_NOT_ALLOWED)
                 .with_header(header::ALLOW, "POST")
