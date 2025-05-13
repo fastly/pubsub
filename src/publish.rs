@@ -3,7 +3,6 @@ use base64::Engine;
 use fastly::error::anyhow;
 use fastly::http::{header, StatusCode};
 use fastly::{Error, Request};
-use std::borrow::Cow;
 use std::env;
 use std::fmt::Write;
 use std::str;
@@ -11,7 +10,12 @@ use std::str;
 // allow 256 bytes of protocol overhead
 pub const MESSAGE_SIZE_MAX: usize = 32_768 - 256;
 
-pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error> {
+pub fn publish(
+    api_token: &str,
+    topic: &str,
+    message: &[u8],
+    sender: Option<&str>,
+) -> Result<(), Error> {
     let service_id = env::var("FASTLY_SERVICE_ID").unwrap();
 
     let sse_content = match str::from_utf8(message) {
@@ -42,8 +46,8 @@ pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error
     let mqtt_content = {
         let mut v = Vec::new();
         Packet::Publish(Publish {
-            topic: Cow::from(topic),
-            message: Cow::from(message),
+            topic: topic.into(),
+            message: message.into(),
             dup: false,
             qos: 0,
             retain: false,
@@ -54,18 +58,26 @@ pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error
         base64::prelude::BASE64_STANDARD.encode(v)
     };
 
-    let body = serde_json::json!({
-        "items": [{
-            "channel": format!("s:{topic}"),
-            "formats": {
-                "http-stream": {
-                    "content": sse_content,
-                },
-                "ws-message": {
-                    "content-bin": mqtt_content,
-                },
+    let mut item = serde_json::json!({
+        "channel": format!("s:{topic}"),
+        "formats": {
+            "http-stream": {
+                "content": sse_content,
             },
-        }],
+            "ws-message": {
+                "content-bin": mqtt_content,
+            },
+        },
+    });
+
+    if let Some(sender) = sender {
+        item["meta"] = serde_json::json!({
+            "sender": sender,
+        });
+    }
+
+    let body = serde_json::json!({
+        "items": [item],
     });
 
     let body = body.to_string();

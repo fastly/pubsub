@@ -7,16 +7,23 @@ use crate::mqttpacket::{
 use crate::publish::{publish, MESSAGE_SIZE_MAX};
 use crate::storage::Storage;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::ops::Not;
 
 const PACKET_SIZE_MAX: usize = 32_768;
+
+#[derive(Deserialize, Serialize, Default)]
+pub struct Subscription {
+    #[serde(rename = "nl", skip_serializing_if = "<&bool>::not", default)]
+    pub no_local: bool,
+}
 
 #[derive(Deserialize, Serialize, Default)]
 pub struct State {
     pub connected: bool,
     pub client_id: String,
     pub token: Option<String>,
-    pub subs: HashSet<String>,
+    pub subs: HashMap<String, Subscription>,
 }
 
 impl State {
@@ -110,19 +117,28 @@ fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'a>> 
         }
     }
 
-    let reason = if allowed {
-        ctx.state.subs.insert(p.topic.to_owned());
+    if !allowed {
+        return vec![Packet::SubAck(SubAck {
+            id: p.id,
+            reason: Reason::NotAuthorized,
+        })];
+    }
 
-        Reason::Success
-    } else {
-        Reason::NotAuthorized
-    };
+    ctx.state.subs.insert(
+        p.topic.to_string(),
+        Subscription {
+            no_local: p.no_local,
+        },
+    );
 
-    vec![Packet::SubAck(SubAck { id: p.id, reason })]
+    vec![Packet::SubAck(SubAck {
+        id: p.id,
+        reason: Reason::Success,
+    })]
 }
 
 fn handle_unsubscribe<'a>(ctx: &mut Context, p: Unsubscribe<'a>) -> Vec<Packet<'a>> {
-    let reason = if ctx.state.subs.contains(p.topic) {
+    let reason = if ctx.state.subs.contains_key(p.topic) {
         ctx.state.subs.remove(p.topic);
 
         Reason::Success
@@ -160,25 +176,37 @@ fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> {
         }
     }
 
+    if !allowed || p.message.len() > MESSAGE_SIZE_MAX {
+        return vec![];
+    }
+
     let mut out = vec![];
 
-    if allowed && p.message.len() < MESSAGE_SIZE_MAX {
-        if !ctx.config.publish_token.is_empty() {
-            if let Err(e) = publish(&ctx.config.publish_token, &p.topic, &p.message) {
-                // no error response. only log
-                println!("failed to publish: {:?}", e);
-            }
-        } else {
-            println!("publishing not configured, echoing back to sender");
-            out.push(Packet::Publish(Publish {
-                topic: p.topic,
-                message: p.message,
-                dup: false,
-                qos: 0,
-                retain: false,
-                message_expiry_interval: None,
-            }));
+    let ignore = match ctx.state.subs.get(&*p.topic) {
+        Some(sub) => sub.no_local,
+        None => false,
+    };
+
+    if !ctx.config.publish_token.is_empty() {
+        if let Err(e) = publish(
+            &ctx.config.publish_token,
+            &p.topic,
+            &p.message,
+            Some(&ctx.state.client_id),
+        ) {
+            // no error response. only log
+            println!("failed to publish: {:?}", e);
         }
+    } else if !ignore {
+        println!("publishing not configured, echoing back to sender");
+        out.push(Packet::Publish(Publish {
+            topic: p.topic,
+            message: p.message,
+            dup: false,
+            qos: 0,
+            retain: false,
+            message_expiry_interval: None,
+        }));
     }
 
     out

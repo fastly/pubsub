@@ -171,7 +171,7 @@ pub fn post(config: &Config, authorizor: &dyn Authorizor, mut req: Request) -> R
         );
     }
 
-    if publish(&config.publish_token, topic, &message).is_err() {
+    if publish(&config.publish_token, topic, &message, None).is_err() {
         return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Publish process failed");
     }
 
