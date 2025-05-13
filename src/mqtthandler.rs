@@ -14,6 +14,7 @@ const PACKET_SIZE_MAX: usize = 32_768;
 #[derive(Deserialize, Serialize, Default)]
 pub struct State {
     pub connected: bool,
+    pub client_id: String,
     pub token: Option<String>,
     pub subs: HashSet<String>,
 }
@@ -21,6 +22,7 @@ pub struct State {
 impl State {
     fn clear(&mut self) {
         self.connected = false;
+        self.client_id.clear();
         self.token = None;
         self.subs.clear();
     }
@@ -60,6 +62,7 @@ fn handle_connect<'a>(ctx: &mut Context, p: Connect<'a>) -> Vec<Packet<'a>> {
     // mark the session as connected and stash the token
 
     ctx.state.connected = true;
+    ctx.state.client_id = p.client_id.to_string();
 
     if let Some(s) = p.password {
         ctx.state.token = Some(s.to_string());
