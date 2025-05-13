@@ -145,7 +145,7 @@ where
         }
 
         client_id = state.client_id.clone();
-        connected_subs = state.subs.clone();
+        connected_subs = state.subs.keys().map(|s| s.to_string()).collect();
     }
 
     let mut replayed = 0;
@@ -208,18 +208,25 @@ where
         })
     }
 
-    for topic in &ctx.handler_ctx.state.subs {
+    for (topic, sub) in &ctx.handler_ctx.state.subs {
         if !connected_subs.contains(topic) {
+            let mut filters = Vec::new();
+
+            if sub.no_local {
+                filters.push("skip-self".to_string());
+            }
+
             cmsgs.push(ControlMessage {
                 ctype: "subscribe".to_string(),
                 channel: Some(format!("s:{topic}")),
+                filters,
                 ..Default::default()
             });
         }
     }
 
     for topic in connected_subs.iter() {
-        if !ctx.handler_ctx.state.subs.contains(topic.as_str()) {
+        if !ctx.handler_ctx.state.subs.contains_key(topic.as_str()) {
             cmsgs.push(ControlMessage {
                 ctype: "unsubscribe".to_string(),
                 channel: Some(format!("s:{topic}")),
