@@ -331,7 +331,11 @@ mod tests {
             })
         }
 
-        fn read_retained(&self, _topic: &str) -> Result<Option<RetainedSlot>, StorageError> {
+        fn read_retained(
+            &self,
+            _topic: &str,
+            _after: Option<RetainedVersion>,
+        ) -> Result<Option<RetainedSlot>, StorageError> {
             Ok(None)
         }
     }
