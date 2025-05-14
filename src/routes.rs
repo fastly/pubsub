@@ -57,7 +57,7 @@ pub fn handle_request(
 
             events::get(authorizor, req)
         } else if req.get_method() == Method::POST && config.http_publish_enabled {
-            events::post(&config, authorizor, req)
+            events::post(&config, authorizor, storage, req)
         } else {
             let mut allow = "OPTIONS".to_string();
 
