@@ -10,10 +10,16 @@ use std::str;
 // allow 256 bytes of protocol overhead
 pub const MESSAGE_SIZE_MAX: usize = 32_768 - 256;
 
+pub struct Sequencing {
+    pub id: String,
+    pub prev_id: String,
+}
+
 pub fn publish(
     api_token: &str,
     topic: &str,
     message: &[u8],
+    sequencing: Option<Sequencing>,
     sender: Option<&str>,
 ) -> Result<(), Error> {
     let service_id = env::var("FASTLY_SERVICE_ID").unwrap();
@@ -43,31 +49,39 @@ pub fn publish(
         }
     };
 
-    let mqtt_content = {
-        let mut v = Vec::new();
-        Packet::Publish(Publish {
-            topic: topic.into(),
-            message: message.into(),
-            dup: false,
-            qos: 0,
-            retain: false,
-            message_expiry_interval: None,
+    let ws_message = if sequencing.is_some() {
+        serde_json::json!({
+            "action": "refresh" // currently the only way to reliably deliver over websockets
         })
-        .serialize(&mut v)?;
+    } else {
+        let mqtt_content = {
+            let mut v = Vec::new();
+            Packet::Publish(Publish {
+                topic: topic.into(),
+                message: message.into(),
+                dup: false,
+                qos: 0,
+                retain: false,                 // always false for non-durable
+                message_expiry_interval: None, // always none for non-durable
+            })
+            .serialize(&mut v)?;
 
-        base64::prelude::BASE64_STANDARD.encode(v)
+            base64::prelude::BASE64_STANDARD.encode(v)
+        };
+
+        serde_json::json!({
+            "content": mqtt_content
+        })
     };
 
     let mut item = serde_json::json!({
         "channel": format!("s:{topic}"),
         "formats": {
             "http-stream": {
-                "content": sse_content,
+                "content": sse_content
             },
-            "ws-message": {
-                "content-bin": mqtt_content,
-            },
-        },
+            "ws-message": ws_message,
+        }
     });
 
     if let Some(sender) = sender {

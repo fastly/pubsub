@@ -88,16 +88,18 @@ fn bad_request<T: AsRef<str>>(message: T) -> Response {
     Response::from_status(400).with_body_text_plain(&format!("{}\n", message.as_ref()))
 }
 
-fn handle_websocket_events<H>(
+fn handle_websocket_events<P, S>(
     config: &Config,
     authorizor: &dyn Authorizor,
     storage: &dyn Storage,
     req: Request,
     body: Vec<u8>,
-    mut handler: H,
+    mut packet_handler: P,
+    mut sync_handler: S,
 ) -> Response
 where
-    H: for<'a> FnMut(&mut mqtthandler::Context, Packet<'a>) -> Vec<Packet<'a>>,
+    P: for<'a> FnMut(&mut mqtthandler::Context, Packet<'a>) -> Vec<Packet<'a>>,
+    S: FnMut(&mut mqtthandler::Context) -> Vec<Packet<'static>>,
 {
     let mut grip_offered = false;
     let mut protocol_requested = false;
@@ -191,9 +193,25 @@ where
 
     let mut out_events = Vec::new();
 
+    for p in sync_handler(&mut ctx.handler_ctx) {
+        println!("{} OUT {:?}", ctx.cid, p);
+
+        let mut buf = Vec::new();
+
+        // websocket-over-http messages must be prefixed
+        write!(&mut buf, "m:").unwrap();
+
+        p.serialize(&mut buf).unwrap();
+
+        out_events.push(WsEvent {
+            etype: "BINARY".to_string(),
+            content: buf,
+        });
+    }
+
     for e in events {
         out_events.extend(handle_websocket_event(&mut ctx, e, |ctx, p| {
-            handler(ctx, p)
+            packet_handler(ctx, p)
         }));
     }
 
@@ -285,6 +303,8 @@ where
     println!("saving state: {state}");
     resp.append_header("Set-Meta-State", state);
 
+    resp.append_header("Keep-Alive-Interval", "120");
+
     resp
 }
 
@@ -306,6 +326,7 @@ pub fn post(
             req,
             body,
             mqtthandler::handle_packet,
+            mqtthandler::handle_sync,
         )
     } else {
         Response::from_status(StatusCode::NOT_ACCEPTABLE).with_body_text_plain("Not Acceptable\n")
@@ -397,6 +418,7 @@ mod tests {
 
                     Vec::new()
                 },
+                |_| Vec::new(),
             );
             assert_eq!(resp.get_status(), StatusCode::OK);
             assert_eq!(resp.get_header_str("Content-Bytes-Accepted"), Some("0"));
@@ -412,8 +434,13 @@ mod tests {
                 .with_header("Content-Bytes-Replayed", part1.len().to_string());
 
             let mut out = None;
-            let resp =
-                handle_websocket_events(&config, &authorizor, &storage, req, body, |_, p| {
+            let resp = handle_websocket_events(
+                &config,
+                &authorizor,
+                &storage,
+                req,
+                body,
+                |_, p| {
                     if let Packet::Publish(p) = &p {
                         out = Some(Publish {
                             topic: Cow::from(p.topic.clone().into_owned()),
@@ -426,7 +453,9 @@ mod tests {
                     }
 
                     Vec::new()
-                });
+                },
+                |_| Vec::new(),
+            );
             assert_eq!(resp.get_status(), StatusCode::OK);
             assert_eq!(resp.get_header_str("Content-Bytes-Accepted"), Some("15"));
             let out = out.unwrap();
