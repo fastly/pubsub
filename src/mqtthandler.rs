@@ -160,11 +160,13 @@ fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'a>> 
     match ctx.storage.read_retained(p.topic, None) {
         Ok(Some(r)) => retained = Some(r),
         Ok(None) | Err(StorageError::StoreNotFound) => {}
-        Err(_) => {
+        Err(e) => {
+            println!("failed to read message from storage: {:?}", e);
+
             return vec![Packet::SubAck(SubAck {
                 id: p.id,
                 reason: Reason::UnspecifiedError,
-            })]
+            })];
         }
     }
 
@@ -360,7 +362,9 @@ pub fn handle_sync(ctx: &mut Context) -> Vec<Packet<'static>> {
         let r = match ctx.storage.read_retained(topic, after) {
             Ok(Some(r)) => r,
             Ok(None) => continue,
-            Err(_) => {
+            Err(e) => {
+                println!("failed to read message from storage: {:?}", e);
+
                 out.push(Packet::Disconnect(Disconnect {
                     reason: Reason::UnspecifiedError,
                 }));
