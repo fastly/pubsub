@@ -670,9 +670,15 @@ impl<'a> Packet<'a> {
                     flags |= 0x01;
                 }
 
+                flags |= (p.qos & 0x03) << 1;
+
+                if p.dup {
+                    flags |= 0x08;
+                }
+
                 out.push(0x30 | flags); // type=3
 
-                let len = (p.topic.len() + 3 + p.message.len()) as u32;
+                let len = (2 + p.topic.len() + props_with_len.len() + p.message.len()) as u32;
                 write_int(&mut out, len)?; // remaining length
 
                 out.extend(&(p.topic.len() as u16).to_be_bytes());
@@ -745,5 +751,39 @@ mod tests {
 
         assert_eq!(publish.topic, "fruit");
         assert_eq!(publish.message.as_ref(), b"apple");
+        assert!(!publish.dup);
+        assert_eq!(publish.qos, 0);
+        assert!(!publish.retain);
+        assert!(publish.message_expiry_interval.is_none());
+
+        let p = Packet::Publish(Publish {
+            topic: Cow::from(topic),
+            message: Cow::from(message),
+            dup: true,
+            qos: 1,
+            retain: true,
+            message_expiry_interval: Some(30),
+        });
+
+        let mut data = Vec::new();
+        p.serialize(&mut data).unwrap();
+
+        let expected = "3b 12 00 05 66 72 75 69 74 05 02 00 00 00 1e 61 70 70 6c 65";
+        assert_eq!(hex(&data), expected);
+
+        let (p, read) = Packet::parse(&data).unwrap().unwrap();
+        assert_eq!(read, 20);
+
+        let publish = match p {
+            Packet::Publish(p) => p,
+            _ => panic!("unexpected packet type"),
+        };
+
+        assert_eq!(publish.topic, "fruit");
+        assert_eq!(publish.message.as_ref(), b"apple");
+        assert!(publish.dup);
+        assert_eq!(publish.qos, 1);
+        assert!(publish.retain);
+        assert_eq!(publish.message_expiry_interval, Some(30));
     }
 }
