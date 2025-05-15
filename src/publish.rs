@@ -70,7 +70,7 @@ pub fn publish(
         };
 
         serde_json::json!({
-            "content": mqtt_content
+            "content-bin": mqtt_content
         })
     };
 
