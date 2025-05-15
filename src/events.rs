@@ -1,12 +1,25 @@
 use crate::auth::{AuthorizationError, Authorizor, Capabilities};
 use crate::config::Config;
-use crate::publish::{publish, MESSAGE_SIZE_MAX};
+use crate::publish::{publish, Sequencing, MESSAGE_SIZE_MAX};
+use crate::storage::Storage;
 use fastly::http::{header, StatusCode};
 use fastly::{Request, Response};
 use std::collections::{HashMap, HashSet};
 use std::str;
+use std::time::Duration;
 
 const TOPICS_PER_REQUEST_MAX: usize = 10;
+
+struct Version {
+    generation: u64,
+    seq: u64,
+}
+
+impl Version {
+    fn to_id(&self) -> String {
+        format!("{}-{}", self.generation, self.seq)
+    }
+}
 
 fn text_response(status: StatusCode, text: &str) -> Response {
     Response::from_status(status).with_body_text_plain(&format!("{text}\n"))
@@ -109,11 +122,31 @@ pub fn get(authorizor: &dyn Authorizor, req: Request) -> Response {
     resp.with_body("event: stream-open\ndata: \n\n")
 }
 
-pub fn post(config: &Config, authorizor: &dyn Authorizor, mut req: Request) -> Response {
+pub fn post(
+    config: &Config,
+    authorizor: &dyn Authorizor,
+    storage: &dyn Storage,
+    mut req: Request,
+) -> Response {
     let body = req.take_body();
 
     let Some(topic) = req.get_query_parameter("topic") else {
         return text_response(StatusCode::BAD_REQUEST, "Missing 'topic' param");
+    };
+
+    let retain = req.get_query_parameter("retain") == Some("true");
+
+    let ttl: Option<Duration> = match req.get_query_parameter("ttl") {
+        Some(x) => match x.parse::<u32>() {
+            Ok(x) => Some(Duration::from_secs(x.into())),
+            Err(e) => {
+                return text_response(
+                    StatusCode::BAD_REQUEST,
+                    &format!("Invalid 'ttl' param: {e}"),
+                )
+            }
+        },
+        None => None,
     };
 
     let caps = if req.fastly_key_is_valid() {
@@ -133,7 +166,7 @@ pub fn post(config: &Config, authorizor: &dyn Authorizor, mut req: Request) -> R
             if scheme != "Bearer" {
                 return text_response(
                     StatusCode::BAD_REQUEST,
-                    &format!("Unsupported authorization scheme: {}", scheme),
+                    &format!("Unsupported authorization scheme: {scheme}"),
                 );
             }
 
@@ -171,7 +204,51 @@ pub fn post(config: &Config, authorizor: &dyn Authorizor, mut req: Request) -> R
         );
     }
 
-    if publish(&config.publish_token, topic, &message, None, None).is_err() {
+    let mut version = None;
+
+    if retain {
+        match storage.write_retained(topic, &message, ttl) {
+            Ok(v) => version = Some(v),
+            Err(e) => {
+                println!("failed to write message to storage: {:?}", e);
+
+                return text_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to write message to storage",
+                );
+            }
+        }
+    }
+
+    let seq = version.map(|v| {
+        let version = Version {
+            generation: v.generation,
+            seq: v.seq,
+        };
+
+        let prev_id = if v.seq > 1 {
+            // if we wrote version 2 or later, it implies the slot
+            // existed and thus the previous write would have been
+            // for the same generation
+            Version {
+                generation: v.generation,
+                seq: v.seq - 1,
+            }
+            .to_id()
+        } else {
+            // if we wrote version 1, it implies the slot was empty
+            "none".to_string()
+        };
+
+        Sequencing {
+            id: version.to_id(),
+            prev_id,
+        }
+    });
+
+    if let Err(e) = publish(&config.publish_token, topic, &message, seq, None) {
+        println!("failed to publish: {:?}", e);
+
         return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Publish process failed");
     }
 
