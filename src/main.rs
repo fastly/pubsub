@@ -13,11 +13,12 @@ fn main() -> Result<(), Error> {
     if local {
         let config_source = config::TestSource;
 
-        routes::handle_request(&config_source, &authorizor, &storage, req)?;
+        routes::handle_request(&config_source, &authorizor, &storage, false, req)?;
     } else {
         let config_source = config::ConfigAndSecretStoreSource::new("config", "secrets");
+        let fastly_authed = req.fastly_key_is_valid();
 
-        routes::handle_request(&config_source, &authorizor, &storage, req)?;
+        routes::handle_request(&config_source, &authorizor, &storage, fastly_authed, req)?;
     }
 
     Ok(())

@@ -49,9 +49,17 @@ pub fn publish(
         }
     };
 
-    let ws_message = if sequencing.is_some() {
+    let mut item = if sequencing.is_some() {
         serde_json::json!({
-            "action": "refresh" // currently the only way to reliably deliver over websockets
+            "channel": format!("d:{topic}"),
+            "formats": {
+                "http-stream": {
+                    "action": "hint", // TODO: send content instead
+                },
+                "ws-message": {
+                    "action": "refresh", // currently the only way to reliably deliver over websockets
+                }
+            }
         })
     } else {
         let mqtt_content = {
@@ -70,19 +78,17 @@ pub fn publish(
         };
 
         serde_json::json!({
-            "content-bin": mqtt_content
+            "channel": format!("s:{topic}"),
+            "formats": {
+                "http-stream": {
+                    "content": sse_content
+                },
+                "ws-message": {
+                    "content-bin": mqtt_content,
+                }
+            }
         })
     };
-
-    let mut item = serde_json::json!({
-        "channel": format!("s:{topic}"),
-        "formats": {
-            "http-stream": {
-                "content": sse_content
-            },
-            "ws-message": ws_message,
-        }
-    });
 
     if let Some(sender) = sender {
         item["meta"] = serde_json::json!({
