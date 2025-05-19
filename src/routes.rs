@@ -26,6 +26,7 @@ pub fn handle_request(
     config_source: &dyn config::Source,
     authorizor: &dyn auth::Authorizor,
     storage: &dyn storage::Storage,
+    fastly_authed: bool,
     req: Request,
 ) -> Result<(), Error> {
     let config = match config_source.config() {
@@ -55,9 +56,9 @@ pub fn handle_request(
                 return Ok(());
             }
 
-            events::get(authorizor, req)
+            events::get(&config, authorizor, storage, fastly_authed, req)
         } else if req.get_method() == Method::POST && config.http_publish_enabled {
-            events::post(&config, authorizor, storage, req)
+            events::post(&config, authorizor, storage, fastly_authed, req)
         } else {
             let mut allow = "OPTIONS".to_string();
 
@@ -89,7 +90,7 @@ pub fn handle_request(
         }
     } else if path == "/admin/keys" && config.admin_enabled {
         if req.get_method() == "POST" {
-            admin::post_keys(req)
+            admin::post_keys(fastly_authed, req)
         } else {
             Response::from_status(StatusCode::METHOD_NOT_ALLOWED)
                 .with_header(header::ALLOW, "POST")
