@@ -6,24 +6,6 @@ pub struct WsEvent {
     pub content: Vec<u8>,
 }
 
-#[derive(Debug, Default, PartialEq, serde::Serialize)]
-pub struct ControlMessage {
-    #[serde(rename(serialize = "type"))]
-    pub ctype: String,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel: Option<String>,
-
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub filters: Vec<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
-}
-
 fn find_byte(haystack: &[u8], needle: u8) -> Option<usize> {
     for (index, b) in haystack.iter().enumerate() {
         if *b == needle {
