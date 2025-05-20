@@ -38,7 +38,7 @@ fn sse_error(condition: &str, text: &str) -> Response {
         .with_body(format!("event: stream-error\ndata: {data}\n\n"))
 }
 
-pub fn get(authorizor: &dyn Authorizor, req: Request) -> Response {
+pub fn get(authorizor: &dyn Authorizor, fastly_authed: bool, req: Request) -> Response {
     let topics = {
         let mut topics = HashSet::new();
 
@@ -59,7 +59,7 @@ pub fn get(authorizor: &dyn Authorizor, req: Request) -> Response {
         return sse_error("bad-request", "Too many topics");
     }
 
-    let caps = if req.fastly_key_is_valid() {
+    let caps = if fastly_authed {
         Capabilities::new_admin()
     } else {
         let token = if let Some(v) = req.get_query_parameter("auth") {
@@ -126,6 +126,7 @@ pub fn post(
     config: &Config,
     authorizor: &dyn Authorizor,
     storage: &dyn Storage,
+    fastly_authed: bool,
     mut req: Request,
 ) -> Response {
     let body = req.take_body();
@@ -149,7 +150,7 @@ pub fn post(
         None => None,
     };
 
-    let caps = if req.fastly_key_is_valid() {
+    let caps = if fastly_authed {
         Capabilities::new_admin()
     } else {
         let token = if let Some(v) = req.get_header_str(header::AUTHORIZATION) {
