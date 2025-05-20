@@ -16,8 +16,8 @@ fn text_response(status: StatusCode, text: &str) -> Response {
     Response::from_status(status).with_body_text_plain(&format!("{text}\n"))
 }
 
-pub fn post_keys(req: Request) -> Response {
-    if !req.fastly_key_is_valid() {
+pub fn post_keys(fastly_authed: bool, _req: Request) -> Response {
+    if !fastly_authed {
         return text_response(
             StatusCode::UNAUTHORIZED,
             "Fastly-Key header invalid or not specified",
