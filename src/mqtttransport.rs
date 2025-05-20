@@ -1,9 +1,10 @@
 use crate::auth::Authorizor;
 use crate::config::Config;
+use crate::grip::ControlMessage;
 use crate::mqtthandler;
 use crate::mqttpacket::Packet;
 use crate::storage::Storage;
-use crate::websocket::{parse_websocket_event, ControlMessage, WsEvent};
+use crate::websocket::{parse_websocket_event, WsEvent};
 use fastly::http::{HeaderValue, StatusCode};
 use fastly::{Body, Request, Response};
 use std::collections::HashSet;

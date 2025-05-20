@@ -13,11 +13,11 @@ fn main() -> Result<(), Error> {
     if local {
         let config_source = config::TestSource;
 
-        routes::handle_request(&config_source, &authorizor, &storage, req)?;
+        routes::handle_request(&config_source, &authorizor, &storage, false, req)?;
     } else {
         let config_source = config::ConfigAndSecretStoreSource::new("config", "secrets");
 
-        routes::handle_request(&config_source, &authorizor, &storage, req)?;
+        routes::handle_request(&config_source, &authorizor, &storage, true, req)?;
     }
 
     Ok(())

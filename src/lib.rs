@@ -2,6 +2,7 @@ pub mod admin;
 pub mod auth;
 pub mod config;
 pub mod events;
+pub mod grip;
 pub mod mqtthandler;
 pub mod mqttpacket;
 pub mod mqtttransport;

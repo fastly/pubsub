@@ -1,3 +1,4 @@
+use crate::grip::validate_grip_sig;
 use crate::{admin, auth, config, events, mqtttransport, storage};
 use fastly::http::{header, Method, StatusCode};
 use fastly::{Error, Request, Response};
@@ -26,6 +27,7 @@ pub fn handle_request(
     config_source: &dyn config::Source,
     authorizor: &dyn auth::Authorizor,
     storage: &dyn storage::Storage,
+    auth_proxy: bool,
     req: Request,
 ) -> Result<(), Error> {
     let config = match config_source.config() {
@@ -49,10 +51,24 @@ pub fn handle_request(
         if req.get_method() == Method::OPTIONS {
             Response::from_status(StatusCode::OK)
         } else if req.get_method() == Method::GET && config.sse_enabled {
-            // handoff if necessary
-            if req.get_header_str("Grip-Sig").is_none() {
+            let Some(sig) = req.get_header_str("Grip-Sig") else {
+                // handoff if necessary
                 req.handoff_fanout("self")?;
                 return Ok(());
+            };
+
+            if auth_proxy {
+                if let Err(e) = validate_grip_sig(sig) {
+                    print!("failed to validate Grip-Sig: {e}");
+
+                    let resp = Response::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .with_body_text_plain("Failed to authorize Fanout proxy.\n")
+                        .with_cors();
+
+                    resp.send_to_client();
+
+                    return Ok(());
+                }
             }
 
             events::get(authorizor, req)
@@ -74,10 +90,24 @@ pub fn handle_request(
                 .with_body_text_plain("Method Not Allowed\n")
         }
     } else if path == "/mqtt" && config.mqtt_enabled {
-        // handoff if necessary
-        if req.get_header_str("Grip-Sig").is_none() {
+        let Some(sig) = req.get_header_str("Grip-Sig") else {
+            // handoff if necessary
             req.handoff_fanout("self")?;
             return Ok(());
+        };
+
+        if auth_proxy {
+            if let Err(e) = validate_grip_sig(sig) {
+                print!("failed to validate Grip-Sig: {e}");
+
+                let resp = Response::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .with_body_text_plain("Failed to authorize Fanout proxy.\n")
+                    .with_cors();
+
+                resp.send_to_client();
+
+                return Ok(());
+            }
         }
 
         if req.get_method() == Method::POST {
