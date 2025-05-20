@@ -1,4 +1,4 @@
-use crate::auth::Authorizor;
+use crate::auth::Authorization;
 use crate::config::Config;
 use crate::mqttpacket::{
     ConnAck, ConnAckV4, Connect, Disconnect, Packet, PingReq, PingResp, Publish, Reason, SubAck,
@@ -68,7 +68,7 @@ impl State {
 
 pub struct Context<'a> {
     pub config: &'a Config,
-    pub authorizor: &'a dyn Authorizor,
+    pub auth: &'a Authorization,
     pub storage: &'a dyn Storage,
     pub disconnect: bool,
     pub state: State,
@@ -141,7 +141,7 @@ fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'a>> 
     let mut allowed = false;
 
     if let Some(s) = &ctx.state.token {
-        if let Ok(caps) = ctx.authorizor.validate_token(s) {
+        if let Ok(caps) = ctx.auth.app_token.validate_token(s) {
             if caps.can_subscribe(p.topic) {
                 allowed = true;
             }
@@ -241,7 +241,7 @@ fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> {
     let mut allowed = false;
 
     if let Some(s) = &ctx.state.token {
-        if let Ok(caps) = ctx.authorizor.validate_token(s) {
+        if let Ok(caps) = ctx.auth.app_token.validate_token(s) {
             if caps.can_publish(p.topic.as_ref()) {
                 allowed = true;
             }

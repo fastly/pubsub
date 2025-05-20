@@ -1,3 +1,4 @@
+use crate::auth::Authorization;
 use fastly::http::StatusCode;
 use fastly::kv_store;
 use fastly::{Request, Response};
@@ -16,8 +17,8 @@ fn text_response(status: StatusCode, text: &str) -> Response {
     Response::from_status(status).with_body_text_plain(&format!("{text}\n"))
 }
 
-pub fn post_keys(fastly_authed: bool, _req: Request) -> Response {
-    if !fastly_authed {
+pub fn post_keys(auth: &Authorization, _req: Request) -> Response {
+    if !auth.fastly {
         return text_response(
             StatusCode::UNAUTHORIZED,
             "Fastly-Key header invalid or not specified",

@@ -1,4 +1,4 @@
-use crate::auth::Authorizor;
+use crate::auth::Authorization;
 use crate::config::Config;
 use crate::grip::ControlMessage;
 use crate::mqtthandler;
@@ -91,7 +91,7 @@ fn bad_request<T: AsRef<str>>(message: T) -> Response {
 
 fn handle_websocket_events<P, S>(
     config: &Config,
-    authorizor: &dyn Authorizor,
+    auth: &Authorization,
     storage: &dyn Storage,
     req: Request,
     body: Vec<u8>,
@@ -181,7 +181,7 @@ where
     let mut ctx = Context {
         handler_ctx: mqtthandler::Context {
             config,
-            authorizor,
+            auth,
             storage,
             disconnect: false,
             state,
@@ -311,7 +311,7 @@ where
 
 pub fn post(
     config: &Config,
-    authorizor: &dyn Authorizor,
+    auth: &Authorization,
     storage: &dyn Storage,
     mut req: Request,
 ) -> Response {
@@ -322,7 +322,7 @@ pub fn post(
     {
         handle_websocket_events(
             config,
-            authorizor,
+            auth,
             storage,
             req,
             body,
@@ -337,7 +337,7 @@ pub fn post(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::TestAuthorizor;
+    use crate::auth::{Authorization, TestAppTokenAuthorizor, TestGripAuthorizor};
     use crate::config::Config;
     use crate::mqttpacket::Publish;
     use crate::storage::{RetainedSlot, RetainedVersion, StorageError};
@@ -372,7 +372,11 @@ mod tests {
     #[test]
     fn handle_events() {
         let config = Config::default();
-        let authorizor = TestAuthorizor;
+        let auth = Authorization {
+            grip: Box::new(TestGripAuthorizor),
+            fastly: false,
+            app_token: Box::new(TestAppTokenAuthorizor),
+        };
         let storage = TestStorage;
 
         let p = Publish {
@@ -401,7 +405,7 @@ mod tests {
             let mut out = None;
             let resp = handle_websocket_events(
                 &config,
-                &authorizor,
+                &auth,
                 &storage,
                 req,
                 body.clone(),
@@ -437,7 +441,7 @@ mod tests {
             let mut out = None;
             let resp = handle_websocket_events(
                 &config,
-                &authorizor,
+                &auth,
                 &storage,
                 req,
                 body,
