@@ -7,6 +7,7 @@ pub struct Config {
     pub mqtt_enabled: bool,
     pub admin_enabled: bool,
     pub publish_token: String,
+    pub internal_key: Vec<u8>,
 }
 
 impl Default for Config {
@@ -17,6 +18,7 @@ impl Default for Config {
             mqtt_enabled: true,
             admin_enabled: true,
             publish_token: String::new(),
+            internal_key: Vec::new(),
         }
     }
 }
@@ -98,6 +100,12 @@ impl Source for ConfigAndSecretStoreSource {
 
                     config.publish_token = v;
                 }
+                Ok(None) => {}
+                Err(_) => return Err(ConfigError::StoreError),
+            }
+
+            match store.try_get("internal-key") {
+                Ok(Some(v)) => config.internal_key = v.plaintext().to_vec(),
                 Ok(None) => {}
                 Err(_) => return Err(ConfigError::StoreError),
             }

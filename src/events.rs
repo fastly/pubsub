@@ -88,7 +88,7 @@ pub fn get(authorizor: &dyn Authorizor, req: Request) -> Response {
             );
         };
 
-        match authorizor.validate_token(token) {
+        match authorizor.validate_token(token, None) {
             Ok(caps) => caps,
             Err(AuthorizationError::Token(_)) => {
                 return sse_error("forbidden", "Invalid token");
@@ -175,7 +175,7 @@ pub fn post(
             return text_response(StatusCode::BAD_REQUEST, "Missing 'Authorization' header");
         };
 
-        match authorizor.validate_token(token) {
+        match authorizor.validate_token(token, None) {
             Ok(caps) => caps,
             Err(AuthorizationError::Token(_)) => {
                 return text_response(StatusCode::FORBIDDEN, "Invalid token");

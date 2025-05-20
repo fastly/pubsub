@@ -77,6 +77,26 @@ fn validate_token(token: &str, key: &[u8]) -> Result<Capabilities, TokenError> {
     Ok(caps)
 }
 
+pub fn create_token(
+    readable: Vec<String>,
+    writable: Vec<String>,
+    key_id: &str,
+    key: &[u8],
+) -> String {
+    let key = HS256Key::from_bytes(key).with_key_id(key_id);
+
+    let claims = Claims::with_custom_claims(
+        CustomClaims {
+            x_fastly_read: readable,
+            x_fastly_write: writable,
+        },
+        Duration::from_hours(1),
+    );
+
+    key.authenticate(claims)
+        .expect("token creation should always succeed")
+}
+
 #[derive(Debug)]
 pub enum AuthorizationError {
     Token(TokenError),
@@ -92,7 +112,11 @@ impl From<TokenError> for AuthorizationError {
 }
 
 pub trait Authorizor {
-    fn validate_token(&self, token: &str) -> Result<Capabilities, AuthorizationError>;
+    fn validate_token(
+        &self,
+        token: &str,
+        internal_key: Option<&[u8]>,
+    ) -> Result<Capabilities, AuthorizationError>;
 }
 
 pub struct KVStoreAuthorizor {
@@ -108,7 +132,11 @@ impl KVStoreAuthorizor {
 }
 
 impl Authorizor for KVStoreAuthorizor {
-    fn validate_token(&self, token: &str) -> Result<Capabilities, AuthorizationError> {
+    fn validate_token(
+        &self,
+        token: &str,
+        internal_key: Option<&[u8]>,
+    ) -> Result<Capabilities, AuthorizationError> {
         let Ok(metadata) = Token::decode_metadata(token) else {
             return Err(AuthorizationError::Token(TokenError::Invalid));
         };
@@ -117,28 +145,40 @@ impl Authorizor for KVStoreAuthorizor {
             return Err(AuthorizationError::Token(TokenError::NoKeyId));
         };
 
-        let store = match kv_store::KVStore::open(&self.store_name) {
-            Ok(Some(store)) => store,
-            Ok(None) => return Err(AuthorizationError::StoreNotFound),
-            Err(_) => return Err(AuthorizationError::StoreError),
-        };
+        let key = if key_id == "internal" {
+            let Some(internal_key) = internal_key else {
+                return Err(AuthorizationError::KeyNotFound);
+            };
 
-        let v = match store.lookup(key_id) {
-            Ok(mut lookup) => lookup.take_body_bytes(),
-            Err(kv_store::KVStoreError::ItemNotFound) => {
-                return Err(AuthorizationError::KeyNotFound)
+            internal_key.to_vec()
+        } else {
+            let store = match kv_store::KVStore::open(&self.store_name) {
+                Ok(Some(store)) => store,
+                Ok(None) => return Err(AuthorizationError::StoreNotFound),
+                Err(_) => return Err(AuthorizationError::StoreError),
+            };
+
+            match store.lookup(key_id) {
+                Ok(mut lookup) => lookup.take_body_bytes(),
+                Err(kv_store::KVStoreError::ItemNotFound) => {
+                    return Err(AuthorizationError::KeyNotFound)
+                }
+                Err(_) => return Err(AuthorizationError::StoreError),
             }
-            Err(_) => return Err(AuthorizationError::StoreError),
         };
 
-        Ok(validate_token(token, &v)?)
+        Ok(validate_token(token, &key)?)
     }
 }
 
 pub struct TestAuthorizor;
 
 impl Authorizor for TestAuthorizor {
-    fn validate_token(&self, token: &str) -> Result<Capabilities, AuthorizationError> {
+    fn validate_token(
+        &self,
+        token: &str,
+        _internal_key: Option<&[u8]>,
+    ) -> Result<Capabilities, AuthorizationError> {
         Ok(validate_token(token, b"notasecret")?)
     }
 }
@@ -160,7 +200,7 @@ mod tests {
         let key = HS256Key::from_bytes(b"notasecret");
         let token = key.authenticate(claims).unwrap();
 
-        let caps = TestAuthorizor.validate_token(&token).unwrap();
+        let caps = TestAuthorizor.validate_token(&token, None).unwrap();
         assert!(caps.can_subscribe("readable"));
         assert!(!caps.can_subscribe("foo"));
         assert!(caps.can_publish("writable"));
