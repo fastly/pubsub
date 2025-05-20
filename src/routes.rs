@@ -59,7 +59,7 @@ pub fn handle_request(
 
             if auth_proxy {
                 if let Err(e) = validate_grip_sig(sig) {
-                    print!("failed to validate Grip-Sig: {e}");
+                    println!("failed to validate Grip-Sig: {e}");
 
                     let resp = Response::from_status(StatusCode::INTERNAL_SERVER_ERROR)
                         .with_body_text_plain("Failed to authorize Fanout proxy.\n")
@@ -98,7 +98,7 @@ pub fn handle_request(
 
         if auth_proxy {
             if let Err(e) = validate_grip_sig(sig) {
-                print!("failed to validate Grip-Sig: {e}");
+                println!("failed to validate Grip-Sig: {e}");
 
                 let resp = Response::from_status(StatusCode::INTERNAL_SERVER_ERROR)
                     .with_body_text_plain("Failed to authorize Fanout proxy.\n")
