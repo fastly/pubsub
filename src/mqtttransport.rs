@@ -241,6 +241,12 @@ where
                 filters,
                 ..Default::default()
             });
+
+            cmsgs.push(ControlMessage {
+                ctype: "subscribe".to_string(),
+                channel: Some(format!("d:{topic}")),
+                ..Default::default()
+            });
         }
     }
 
@@ -249,6 +255,12 @@ where
             cmsgs.push(ControlMessage {
                 ctype: "unsubscribe".to_string(),
                 channel: Some(format!("s:{topic}")),
+                ..Default::default()
+            });
+
+            cmsgs.push(ControlMessage {
+                ctype: "unsubscribe".to_string(),
+                channel: Some(format!("d:{topic}")),
                 ..Default::default()
             });
         }
