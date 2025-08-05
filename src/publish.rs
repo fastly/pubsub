@@ -99,7 +99,7 @@ pub fn publish(
     let req = Request::post(format!(
         "https://api.fastly.com/service/{service_id}/publish/"
     ))
-    .with_header(header::AUTHORIZATION, format!("Bearer {}", api_token))
+    .with_header(header::AUTHORIZATION, format!("Bearer {api_token}"))
     .with_body(body)
     .with_pass(true);
 

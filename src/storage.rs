@@ -105,7 +105,7 @@ impl Storage for KVStoreStorage {
             Err(e) => return Err(StorageError::KVStore(e)),
         };
 
-        let key_name = format!("r:{}", topic);
+        let key_name = format!("r:{topic}");
 
         let expires_at = ttl.map(|ttl| time::UtcDateTime::now() + ttl);
 
@@ -179,7 +179,7 @@ impl Storage for KVStoreStorage {
             Err(e) => return Err(StorageError::KVStore(e)),
         };
 
-        let key_name = format!("r:{}", topic);
+        let key_name = format!("r:{topic}");
 
         let (mut lookup, meta) = match lookup(&store, &key_name)? {
             Some(ret) => ret,

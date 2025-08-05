@@ -1,4 +1,4 @@
-use crate::auth::{AuthorizationError, Authorizor, Capabilities};
+use crate::auth::{Authorization, AuthorizationError, Capabilities};
 use crate::config::Config;
 use crate::publish::{publish, Sequencing, MESSAGE_SIZE_MAX};
 use crate::storage::Storage;
@@ -38,7 +38,7 @@ fn sse_error(condition: &str, text: &str) -> Response {
         .with_body(format!("event: stream-error\ndata: {data}\n\n"))
 }
 
-pub fn get(authorizor: &dyn Authorizor, fastly_authed: bool, req: Request) -> Response {
+pub fn get(auth: &Authorization, req: Request) -> Response {
     let topics = {
         let mut topics = HashSet::new();
 
@@ -59,7 +59,7 @@ pub fn get(authorizor: &dyn Authorizor, fastly_authed: bool, req: Request) -> Re
         return sse_error("bad-request", "Too many topics");
     }
 
-    let caps = if fastly_authed {
+    let caps = if auth.fastly {
         Capabilities::new_admin()
     } else {
         let token = if let Some(v) = req.get_query_parameter("auth") {
@@ -76,7 +76,7 @@ pub fn get(authorizor: &dyn Authorizor, fastly_authed: bool, req: Request) -> Re
             if scheme != "Bearer" {
                 return sse_error(
                     "bad-request",
-                    &format!("Unsupported authorization scheme: {}", scheme),
+                    &format!("Unsupported authorization scheme: {scheme}"),
                 );
             }
 
@@ -88,13 +88,13 @@ pub fn get(authorizor: &dyn Authorizor, fastly_authed: bool, req: Request) -> Re
             );
         };
 
-        match authorizor.validate_token(token) {
+        match auth.app_token.validate_token(token) {
             Ok(caps) => caps,
             Err(AuthorizationError::Token(_)) => {
                 return sse_error("forbidden", "Invalid token");
             }
             Err(e) => {
-                println!("auth failed: {:?}", e);
+                println!("auth failed: {e:?}");
 
                 return sse_error("internal-server-error", "Auth process failed");
             }
@@ -124,9 +124,8 @@ pub fn get(authorizor: &dyn Authorizor, fastly_authed: bool, req: Request) -> Re
 
 pub fn post(
     config: &Config,
-    authorizor: &dyn Authorizor,
+    auth: &Authorization,
     storage: &dyn Storage,
-    fastly_authed: bool,
     mut req: Request,
 ) -> Response {
     let body = req.take_body();
@@ -150,7 +149,7 @@ pub fn post(
         None => None,
     };
 
-    let caps = if fastly_authed {
+    let caps = if auth.fastly {
         Capabilities::new_admin()
     } else {
         let token = if let Some(v) = req.get_header_str(header::AUTHORIZATION) {
@@ -176,13 +175,13 @@ pub fn post(
             return text_response(StatusCode::BAD_REQUEST, "Missing 'Authorization' header");
         };
 
-        match authorizor.validate_token(token) {
+        match auth.app_token.validate_token(token) {
             Ok(caps) => caps,
             Err(AuthorizationError::Token(_)) => {
                 return text_response(StatusCode::FORBIDDEN, "Invalid token");
             }
             Err(e) => {
-                println!("auth failed: {:?}", e);
+                println!("auth failed: {e:?}");
 
                 return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Auth process failed");
             }
@@ -211,7 +210,7 @@ pub fn post(
         match storage.write_retained(topic, &message, ttl) {
             Ok(v) => version = Some(v),
             Err(e) => {
-                println!("failed to write message to storage: {:?}", e);
+                println!("failed to write message to storage: {e:?}");
 
                 return text_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -248,7 +247,7 @@ pub fn post(
     });
 
     if let Err(e) = publish(&config.publish_token, topic, &message, seq, None) {
-        println!("failed to publish: {:?}", e);
+        println!("failed to publish: {e:?}");
 
         return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Publish process failed");
     }

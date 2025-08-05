@@ -1,4 +1,3 @@
-use crate::grip::validate_grip_sig;
 use crate::{admin, auth, config, events, mqtttransport, storage};
 use fastly::http::{header, Method, StatusCode};
 use fastly::{Error, Request, Response};
@@ -25,10 +24,8 @@ impl WithCors for Response {
 
 pub fn handle_request(
     config_source: &dyn config::Source,
-    authorizor: &dyn auth::Authorizor,
+    auth: &auth::Authorization,
     storage: &dyn storage::Storage,
-    auth_proxy: bool,
-    fastly_authed: bool,
     req: Request,
 ) -> Result<(), Error> {
     let config = match config_source.config() {
@@ -58,23 +55,21 @@ pub fn handle_request(
                 return Ok(());
             };
 
-            if auth_proxy {
-                if let Err(e) = validate_grip_sig(sig) {
-                    println!("failed to validate Grip-Sig: {e}");
+            if let Err(e) = auth.grip.validate_sig(sig) {
+                println!("failed to validate Grip-Sig: {e}");
 
-                    let resp = Response::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .with_body_text_plain("Failed to authorize Fanout proxy.\n")
-                        .with_cors();
+                let resp = Response::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .with_body_text_plain("Failed to authorize Fanout proxy.\n")
+                    .with_cors();
 
-                    resp.send_to_client();
+                resp.send_to_client();
 
-                    return Ok(());
-                }
+                return Ok(());
             }
 
-            events::get(authorizor, fastly_authed, req)
+            events::get(auth, req)
         } else if req.get_method() == Method::POST && config.http_publish_enabled {
-            events::post(&config, authorizor, storage, fastly_authed, req)
+            events::post(&config, auth, storage, req)
         } else {
             let mut allow = "OPTIONS".to_string();
 
@@ -97,22 +92,20 @@ pub fn handle_request(
             return Ok(());
         };
 
-        if auth_proxy {
-            if let Err(e) = validate_grip_sig(sig) {
-                println!("failed to validate Grip-Sig: {e}");
+        if let Err(e) = auth.grip.validate_sig(sig) {
+            println!("failed to validate Grip-Sig: {e}");
 
-                let resp = Response::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .with_body_text_plain("Failed to authorize Fanout proxy.\n")
-                    .with_cors();
+            let resp = Response::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+                .with_body_text_plain("Failed to authorize Fanout proxy.\n")
+                .with_cors();
 
-                resp.send_to_client();
+            resp.send_to_client();
 
-                return Ok(());
-            }
+            return Ok(());
         }
 
         if req.get_method() == Method::POST {
-            mqtttransport::post(&config, authorizor, storage, req)
+            mqtttransport::post(&config, auth, storage, req)
         } else {
             Response::from_status(StatusCode::METHOD_NOT_ALLOWED)
                 .with_header(header::ALLOW, "POST")
@@ -120,7 +113,7 @@ pub fn handle_request(
         }
     } else if path == "/admin/keys" && config.admin_enabled {
         if req.get_method() == "POST" {
-            admin::post_keys(fastly_authed, req)
+            admin::post_keys(auth, req)
         } else {
             Response::from_status(StatusCode::METHOD_NOT_ALLOWED)
                 .with_header(header::ALLOW, "POST")

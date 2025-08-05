@@ -1,6 +1,37 @@
+use crate::grip;
 use fastly::kv_store;
 use jwt_simple::prelude::*;
 use std::borrow::Borrow;
+use std::env;
+
+const FASTLY_PUBLIC_KEY: &str = concat!(
+    "-----BEGIN PUBLIC KEY-----\n",
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECKo5A1ebyFcnmVV8SE5On+8G81Jy\n",
+    "BjSvcrx4VLetWCjuDAmppTo3xM/zz763COTCgHfp/6lPdCyYjjqc+GM7sw==\n",
+    "-----END PUBLIC KEY-----\n"
+);
+
+pub trait GripAuthorizor {
+    fn validate_sig(&self, sig: &str) -> Result<(), grip::ValidationError>;
+}
+
+pub struct FanoutGripAuthorizor;
+
+impl GripAuthorizor for FanoutGripAuthorizor {
+    fn validate_sig(&self, sig: &str) -> Result<(), grip::ValidationError> {
+        let service_id = env::var("FASTLY_SERVICE_ID").expect("FASTLY_SERVICE_ID should be set");
+
+        grip::validate_grip_sig(sig, FASTLY_PUBLIC_KEY, &service_id)
+    }
+}
+
+pub struct TestGripAuthorizor;
+
+impl GripAuthorizor for TestGripAuthorizor {
+    fn validate_sig(&self, _sig: &str) -> Result<(), grip::ValidationError> {
+        Ok(())
+    }
+}
 
 fn slice_contains<T, Q>(s: &[T], value: &Q) -> bool
 where
@@ -91,15 +122,15 @@ impl From<TokenError> for AuthorizationError {
     }
 }
 
-pub trait Authorizor {
+pub trait AppTokenAuthorizor {
     fn validate_token(&self, token: &str) -> Result<Capabilities, AuthorizationError>;
 }
 
-pub struct KVStoreAuthorizor {
+pub struct KVStoreAppTokenAuthorizor {
     store_name: String,
 }
 
-impl KVStoreAuthorizor {
+impl KVStoreAppTokenAuthorizor {
     pub fn new(store_name: &str) -> Self {
         Self {
             store_name: store_name.to_string(),
@@ -107,7 +138,7 @@ impl KVStoreAuthorizor {
     }
 }
 
-impl Authorizor for KVStoreAuthorizor {
+impl AppTokenAuthorizor for KVStoreAppTokenAuthorizor {
     fn validate_token(&self, token: &str) -> Result<Capabilities, AuthorizationError> {
         let Ok(metadata) = Token::decode_metadata(token) else {
             return Err(AuthorizationError::Token(TokenError::Invalid));
@@ -135,12 +166,18 @@ impl Authorizor for KVStoreAuthorizor {
     }
 }
 
-pub struct TestAuthorizor;
+pub struct TestAppTokenAuthorizor;
 
-impl Authorizor for TestAuthorizor {
+impl AppTokenAuthorizor for TestAppTokenAuthorizor {
     fn validate_token(&self, token: &str) -> Result<Capabilities, AuthorizationError> {
         Ok(validate_token(token, b"notasecret")?)
     }
+}
+
+pub struct Authorization {
+    pub grip: Box<dyn GripAuthorizor>,
+    pub fastly: bool,
+    pub app_token: Box<dyn AppTokenAuthorizor>,
 }
 
 #[cfg(test)]
@@ -148,7 +185,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auth() {
+    fn token_auth() {
         let claims = Claims::with_custom_claims(
             CustomClaims {
                 x_fastly_read: vec!["readable".to_string()],
@@ -160,10 +197,15 @@ mod tests {
         let key = HS256Key::from_bytes(b"notasecret");
         let token = key.authenticate(claims).unwrap();
 
-        let caps = TestAuthorizor.validate_token(&token).unwrap();
+        let caps = TestAppTokenAuthorizor.validate_token(&token).unwrap();
         assert!(caps.can_subscribe("readable"));
         assert!(!caps.can_subscribe("foo"));
         assert!(caps.can_publish("writable"));
         assert!(!caps.can_subscribe("foo"));
+    }
+
+    #[test]
+    fn parse_fastly_key() {
+        ES256PublicKey::from_pem(FASTLY_PUBLIC_KEY).unwrap();
     }
 }

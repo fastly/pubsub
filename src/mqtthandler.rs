@@ -1,4 +1,4 @@
-use crate::auth::Authorizor;
+use crate::auth::Authorization;
 use crate::config::Config;
 use crate::mqttpacket::{
     ConnAck, ConnAckV4, Connect, Disconnect, Packet, PingReq, PingResp, Publish, Reason, SubAck,
@@ -68,7 +68,7 @@ impl State {
 
 pub struct Context<'a> {
     pub config: &'a Config,
-    pub authorizor: &'a dyn Authorizor,
+    pub auth: &'a Authorization,
     pub storage: &'a dyn Storage,
     pub disconnect: bool,
     pub state: State,
@@ -141,7 +141,7 @@ fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'a>> 
     let mut allowed = false;
 
     if let Some(s) = &ctx.state.token {
-        if let Ok(caps) = ctx.authorizor.validate_token(s) {
+        if let Ok(caps) = ctx.auth.app_token.validate_token(s) {
             if caps.can_subscribe(p.topic) {
                 allowed = true;
             }
@@ -161,7 +161,7 @@ fn handle_subscribe<'a>(ctx: &mut Context, p: Subscribe<'a>) -> Vec<Packet<'a>> 
         Ok(Some(r)) => retained = Some(r),
         Ok(None) | Err(StorageError::StoreNotFound) => {}
         Err(e) => {
-            println!("failed to read message from storage: {:?}", e);
+            println!("failed to read message from storage: {e:?}");
 
             return vec![Packet::SubAck(SubAck {
                 id: p.id,
@@ -241,7 +241,7 @@ fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> {
     let mut allowed = false;
 
     if let Some(s) = &ctx.state.token {
-        if let Ok(caps) = ctx.authorizor.validate_token(s) {
+        if let Ok(caps) = ctx.auth.app_token.validate_token(s) {
             if caps.can_publish(p.topic.as_ref()) {
                 allowed = true;
             }
@@ -265,7 +265,7 @@ fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> {
             Ok(v) => version = Some(v),
             Err(e) => {
                 // no error response. only log
-                println!("failed to write message to storage: {:?}", e);
+                println!("failed to write message to storage: {e:?}");
             }
         }
     }
@@ -310,7 +310,7 @@ fn handle_publish<'a>(ctx: &mut Context, p: Publish<'a>) -> Vec<Packet<'a>> {
             Some(&ctx.state.client_id),
         ) {
             // no error response. only log
-            println!("failed to publish: {:?}", e);
+            println!("failed to publish: {e:?}");
         }
     } else if seq.is_none() && !ignore {
         println!("publishing not configured, echoing back to sender");
@@ -338,7 +338,7 @@ pub fn handle_packet<'a>(ctx: &mut Context, p: Packet<'a>) -> Vec<Packet<'a>> {
         Packet::Unsubscribe(p) => out.extend(handle_unsubscribe(ctx, p)),
         Packet::Publish(p) => out.extend(handle_publish(ctx, p)),
         Packet::Unsupported(ptype) => {
-            println!("skipping unsupported packet type {}", ptype)
+            println!("skipping unsupported packet type {ptype}")
         }
         _ => println!("skipping unexpected packet"),
     }
@@ -363,7 +363,7 @@ pub fn handle_sync(ctx: &mut Context) -> Vec<Packet<'static>> {
             Ok(Some(r)) => r,
             Ok(None) => continue,
             Err(e) => {
-                println!("failed to read message from storage: {:?}", e);
+                println!("failed to read message from storage: {e:?}");
 
                 out.push(Packet::Disconnect(Disconnect {
                     reason: Reason::UnspecifiedError,
