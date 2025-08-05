@@ -46,13 +46,3 @@ pub struct ControlMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_fastly_key() {
-        ES256PublicKey::from_pem(FASTLY_PUBLIC_KEY).unwrap();
-    }
-}

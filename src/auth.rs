@@ -203,4 +203,9 @@ mod tests {
         assert!(caps.can_publish("writable"));
         assert!(!caps.can_subscribe("foo"));
     }
+
+    #[test]
+    fn parse_fastly_key() {
+        ES256PublicKey::from_pem(FASTLY_PUBLIC_KEY).unwrap();
+    }
 }
