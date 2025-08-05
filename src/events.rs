@@ -76,7 +76,7 @@ pub fn get(auth: &Authorization, req: Request) -> Response {
             if scheme != "Bearer" {
                 return sse_error(
                     "bad-request",
-                    &format!("Unsupported authorization scheme: {}", scheme),
+                    &format!("Unsupported authorization scheme: {scheme}"),
                 );
             }
 
@@ -94,7 +94,7 @@ pub fn get(auth: &Authorization, req: Request) -> Response {
                 return sse_error("forbidden", "Invalid token");
             }
             Err(e) => {
-                println!("auth failed: {:?}", e);
+                println!("auth failed: {e:?}");
 
                 return sse_error("internal-server-error", "Auth process failed");
             }
@@ -181,7 +181,7 @@ pub fn post(
                 return text_response(StatusCode::FORBIDDEN, "Invalid token");
             }
             Err(e) => {
-                println!("auth failed: {:?}", e);
+                println!("auth failed: {e:?}");
 
                 return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Auth process failed");
             }
@@ -210,7 +210,7 @@ pub fn post(
         match storage.write_retained(topic, &message, ttl) {
             Ok(v) => version = Some(v),
             Err(e) => {
-                println!("failed to write message to storage: {:?}", e);
+                println!("failed to write message to storage: {e:?}");
 
                 return text_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -247,7 +247,7 @@ pub fn post(
     });
 
     if let Err(e) = publish(&config.publish_token, topic, &message, seq, None) {
-        println!("failed to publish: {:?}", e);
+        println!("failed to publish: {e:?}");
 
         return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Publish process failed");
     }

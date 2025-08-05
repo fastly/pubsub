@@ -142,7 +142,7 @@ where
         match serde_json::from_slice(v.as_bytes()) {
             Ok(v) => state = v,
             Err(e) => {
-                println!("failed to parse state: {}", e);
+                println!("failed to parse state: {e}");
                 return bad_request("Invalid header");
             }
         }
@@ -163,7 +163,7 @@ where
         }
     }
 
-    println!("{} receiving {} replayed bytes", cid, replayed);
+    println!("{cid} receiving {replayed} replayed bytes");
 
     let mut events = Vec::new();
     let mut pos = 0;

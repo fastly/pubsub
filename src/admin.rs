@@ -50,12 +50,12 @@ pub fn post_keys(auth: &Authorization, _req: Request) -> Response {
 
         let mut value = String::new();
         for &b in Sha1::digest(&random_bytes).as_slice() {
-            value.write_fmt(format_args!("{:02x}", b)).unwrap();
+            value.write_fmt(format_args!("{b:02x}")).unwrap();
         }
 
         let mut id = String::new();
         for &b in Sha1::digest(&value).as_slice()[..4].iter() {
-            id.write_fmt(format_args!("{:02x}", b)).unwrap();
+            id.write_fmt(format_args!("{b:02x}")).unwrap();
         }
 
         Key { id, value }
