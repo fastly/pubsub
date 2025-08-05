@@ -2,6 +2,14 @@ use crate::grip;
 use fastly::kv_store;
 use jwt_simple::prelude::*;
 use std::borrow::Borrow;
+use std::env;
+
+const FASTLY_PUBLIC_KEY: &str = concat!(
+    "-----BEGIN PUBLIC KEY-----\n",
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECKo5A1ebyFcnmVV8SE5On+8G81Jy\n",
+    "BjSvcrx4VLetWCjuDAmppTo3xM/zz763COTCgHfp/6lPdCyYjjqc+GM7sw==\n",
+    "-----END PUBLIC KEY-----\n"
+);
 
 pub trait GripAuthorizor {
     fn validate_sig(&self, sig: &str) -> Result<(), grip::ValidationError>;
@@ -11,7 +19,9 @@ pub struct FanoutGripAuthorizor;
 
 impl GripAuthorizor for FanoutGripAuthorizor {
     fn validate_sig(&self, sig: &str) -> Result<(), grip::ValidationError> {
-        grip::validate_grip_sig(sig)
+        let service_id = env::var("FASTLY_SERVICE_ID").expect("FASTLY_SERVICE_ID should be set");
+
+        grip::validate_grip_sig(sig, FASTLY_PUBLIC_KEY, &service_id)
     }
 }
 

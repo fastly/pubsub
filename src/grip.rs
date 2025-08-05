@@ -1,13 +1,5 @@
 use jwt_simple::prelude::*;
-use std::env;
 use thiserror::Error;
-
-const FASTLY_PUBLIC_KEY: &str = concat!(
-    "-----BEGIN PUBLIC KEY-----\n",
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECKo5A1ebyFcnmVV8SE5On+8G81Jy\n",
-    "BjSvcrx4VLetWCjuDAmppTo3xM/zz763COTCgHfp/6lPdCyYjjqc+GM7sw==\n",
-    "-----END PUBLIC KEY-----\n"
-);
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -21,10 +13,8 @@ pub enum ValidationError {
     ServiceMismatch(String),
 }
 
-pub fn validate_grip_sig(sig: &str) -> Result<(), ValidationError> {
-    let key = ES256PublicKey::from_pem(FASTLY_PUBLIC_KEY).expect("public key should be parsable");
-
-    let service_id = env::var("FASTLY_SERVICE_ID").expect("FASTLY_SERVICE_ID should be set");
+pub fn validate_grip_sig(sig: &str, key: &str, service_id: &str) -> Result<(), ValidationError> {
+    let key = ES256PublicKey::from_pem(key).expect("public key should be parsable");
 
     let claims = key.verify_token::<NoCustomClaims>(sig, None)?;
 
