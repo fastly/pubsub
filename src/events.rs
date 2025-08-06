@@ -12,6 +12,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 const TOPICS_PER_REQUEST_MAX: usize = 10;
+const NEXT_TIMEOUT_SECS: usize = 120;
 
 struct VersionParseError;
 
@@ -119,7 +120,7 @@ pub fn get(auth: &Authorization, storage: &dyn Storage, req: Request) -> Respons
 
     let mut topics = HashMap::new();
 
-    if !grip_last.is_empty() {
+    if is_next {
         for &(channel, last_id) in &grip_last {
             if !channel.starts_with("d:") {
                 continue;
@@ -165,7 +166,7 @@ pub fn get(auth: &Authorization, storage: &dyn Storage, req: Request) -> Respons
         return sse_error("bad-request", "Too many topics");
     }
 
-    if grip_last.is_empty() {
+    if !is_next {
         let last_event_id = if let Some(s) = req.get_query_parameter("lastEventId") {
             Some(s)
         } else {
@@ -197,7 +198,7 @@ pub fn get(auth: &Authorization, storage: &dyn Storage, req: Request) -> Respons
 
     let durable = req.get_query_parameter("durable") == Some("true");
 
-    let caps = if !grip_last.is_empty() || auth.fastly {
+    let caps = if is_next || auth.fastly {
         Capabilities::new_admin()
     } else {
         let token = if let Some(v) = req.get_query_parameter("auth") {
@@ -354,7 +355,7 @@ pub fn get(auth: &Authorization, storage: &dyn Storage, req: Request) -> Respons
     if durable {
         resp.append_header(
             "Grip-Link",
-            "</events?durable=true>; rel=next; timeout=10".to_string(),
+            format!("</events?durable=true>; rel=next; timeout={NEXT_TIMEOUT_SECS}"),
         );
     }
 
