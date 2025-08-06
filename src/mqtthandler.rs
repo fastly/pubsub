@@ -24,7 +24,7 @@ pub struct Version {
 
 impl Version {
     pub fn to_id(&self) -> String {
-        format!("{}-{}", self.generation, self.seq)
+        format!("{:16x}-{}", self.generation, self.seq)
     }
 }
 

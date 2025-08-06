@@ -67,7 +67,7 @@ pub fn handle_request(
                 return Ok(());
             }
 
-            events::get(auth, req)
+            events::get(auth, storage, req)
         } else if req.get_method() == Method::POST && config.http_publish_enabled {
             events::post(&config, auth, storage, req)
         } else {
