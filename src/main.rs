@@ -1,5 +1,5 @@
 use fastly::{Error, Request};
-use pubsub::{auth, config, routes};
+use pubsub::{auth, config, routes, storage};
 use std::env;
 
 fn main() -> Result<(), Error> {
@@ -7,17 +7,33 @@ fn main() -> Result<(), Error> {
     let local = fastly_host == "localhost";
     let req = Request::from_client();
 
-    if local {
-        let config_source = config::TestSource;
-        let authorizor = auth::TestAuthorizor;
+    let app_token_authorizor = Box::new(auth::KVStoreAppTokenAuthorizor::new("keys"));
+    let storage = storage::KVStoreStorage::new("messages");
 
-        routes::handle_request(&config_source, &authorizor, req)?;
+    let (config_source, auth) = if local {
+        let config_source: Box<dyn config::Source> = Box::new(config::TestSource);
+
+        let auth = auth::Authorization {
+            grip: Box::new(auth::TestGripAuthorizor),
+            fastly: false,
+            app_token: app_token_authorizor,
+        };
+
+        (config_source, auth)
     } else {
-        let config_source = config::ConfigAndSecretStoreSource::new("config", "secrets");
-        let authorizor = auth::KVStoreAuthorizor::new("keys");
+        let config_source: Box<dyn config::Source> =
+            Box::new(config::ConfigAndSecretStoreSource::new("config", "secrets"));
 
-        routes::handle_request(&config_source, &authorizor, req)?;
-    }
+        let auth = auth::Authorization {
+            grip: Box::new(auth::FanoutGripAuthorizor),
+            fastly: req.fastly_key_is_valid(),
+            app_token: app_token_authorizor,
+        };
+
+        (config_source, auth)
+    };
+
+    routes::handle_request(&*config_source, &auth, &storage, req)?;
 
     Ok(())
 }

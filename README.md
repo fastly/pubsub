@@ -1,6 +1,14 @@
 # Pub/Sub
 
-Pub/Sub is a publish/subscribe messaging broker that runs on Fastly Compute. It supports messaging via Server-Sent Events or MQTT, using JWTs for access control.
+Pub/Sub is a publish/subscribe messaging broker that runs on Fastly Compute.
+
+Features:
+
+* Supports millions of concurrent subscribers, even to the same topics.
+* Subscribe via Server-Sent Events or MQTT.
+* Publish via HTTP POST or MQTT.
+* JWTs for access control.
+* Optional message durability using Fastly KV Store.
 
 # Requirements
 
@@ -9,7 +17,7 @@ In addition to Compute, this app depends on the following Fastly components:
 * Fanout (for long-lived push connections)
 * Config Store (for non-secret configuration values)
 * Secret Store (for secret configuration values)
-* KV Store (for token signing keys)
+* KV Store (for token signing keys and message storage)
 
 # Setup
 
@@ -165,4 +173,28 @@ Notes & limitations about the MQTT interface:
 
 * Only WebSocket connections are supported, not plain TCP connections.
 * Only MQTT protocol version 5 is supported.
+* Only QoS level 0 is supported (though messages can still be reliably delivered; see [Durability](#durability)).
 * Wildcard subscriptions are not supported.
+
+### Durability
+
+The last message published to each topic can be stored for reliable delivery. Both the publisher and subscriber must opt-in to this behavior.
+
+To enable durable messaging:
+
+1. Create a KV Store and link it to the app under the name "messages".
+2. When subscribing, indicate interest in durable messages. For HTTP, include a `durable=true` query parameter. For MQTT, set the "retain handling" field to 0 in the `SUBSCRIBE` packet.
+3. When publishing, indicate that the message should be retained. For HTTP, include a `retain=true` query parameter. For MQTT, set the "retain" flag in the `PUBLISH` packet.
+
+It is also possible to set an expiration on the message. For HTTP, include a `ttl` query parameter set to a number of seconds. For MQTT, set the "message expiry interval" field in the `PUBLISH` packet. By default, messages don't expire.
+
+If a retained message is published but no subscribers have requested durable messages, delivery of the message will still be attempted but without any delivery guarantee.
+
+For MQTT, durability is implemented as retained messages rather than a non-zero QoS level. This is because publishing a new message essentially revokes the durability of any previous message, which may be insufficient for QoS 1. However, the latest retained message is still at-least-once delivered until it is replaced or expires.
+
+Only being able to store the last message may seem limiting, but there are some benefits:
+
+* Storing messages indefinitely becomes practical. You can retain messages without an expiration and use them to serve initial content.
+* No worry about flooding subscribers with a large message backlog.
+
+The feature is best used for message streams where the latest message supersedes all previous messages. If you need to send a stream of changes that can only be reconciled by receiving every message, you may want to publish a hint or version number and have the subscriber fetch the actual changes out of band.

@@ -3,7 +3,6 @@ use base64::Engine;
 use fastly::error::anyhow;
 use fastly::http::{header, StatusCode};
 use fastly::{Error, Request};
-use std::borrow::Cow;
 use std::env;
 use std::fmt::Write;
 use std::str;
@@ -11,7 +10,18 @@ use std::str;
 // allow 256 bytes of protocol overhead
 pub const MESSAGE_SIZE_MAX: usize = 32_768 - 256;
 
-pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error> {
+pub struct Sequencing {
+    pub id: String,
+    pub prev_id: String,
+}
+
+pub fn publish(
+    api_token: &str,
+    topic: &str,
+    message: &[u8],
+    sequencing: Option<Sequencing>,
+    sender: Option<&str>,
+) -> Result<(), Error> {
     let service_id = env::var("FASTLY_SERVICE_ID").unwrap();
 
     let sse_content = match str::from_utf8(message) {
@@ -39,29 +49,55 @@ pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error
         }
     };
 
-    let mqtt_content = {
-        let mut v = Vec::new();
-        Packet::Publish(Publish {
-            topic: Cow::from(topic),
-            message: Cow::from(message),
+    let mut item = if sequencing.is_some() {
+        serde_json::json!({
+            "channel": format!("d:{topic}"),
+            "formats": {
+                "http-stream": {
+                    "action": "hint", // TODO: send content instead
+                },
+                "ws-message": {
+                    "action": "refresh", // currently the only way to reliably deliver over websockets
+                }
+            }
         })
-        .serialize(&mut v)?;
+    } else {
+        let mqtt_content = {
+            let mut v = Vec::new();
+            Packet::Publish(Publish {
+                topic: topic.into(),
+                message: message.into(),
+                dup: false,
+                qos: 0,
+                retain: false,                 // always false for non-durable
+                message_expiry_interval: None, // always none for non-durable
+            })
+            .serialize(&mut v)?;
 
-        base64::prelude::BASE64_STANDARD.encode(v)
-    };
+            base64::prelude::BASE64_STANDARD.encode(v)
+        };
 
-    let body = serde_json::json!({
-        "items": [{
+        serde_json::json!({
             "channel": format!("s:{topic}"),
             "formats": {
                 "http-stream": {
-                    "content": sse_content,
+                    "content": sse_content
                 },
                 "ws-message": {
                     "content-bin": mqtt_content,
-                },
-            },
-        }],
+                }
+            }
+        })
+    };
+
+    if let Some(sender) = sender {
+        item["meta"] = serde_json::json!({
+            "sender": sender,
+        });
+    }
+
+    let body = serde_json::json!({
+        "items": [item],
     });
 
     let body = body.to_string();
@@ -69,7 +105,7 @@ pub fn publish(api_token: &str, topic: &str, message: &[u8]) -> Result<(), Error
     let req = Request::post(format!(
         "https://api.fastly.com/service/{service_id}/publish/"
     ))
-    .with_header(header::AUTHORIZATION, format!("Bearer {}", api_token))
+    .with_header(header::AUTHORIZATION, format!("Bearer {api_token}"))
     .with_body(body)
     .with_pass(true);
 
