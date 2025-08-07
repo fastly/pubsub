@@ -101,7 +101,9 @@ impl Storage for KVStoreStorage {
     ) -> Result<RetainedVersion, StorageError> {
         let store = match KVStore::open(&self.store_name) {
             Ok(Some(store)) => store,
-            Ok(None) => return Err(StorageError::StoreNotFound),
+            Ok(None) | Err(KVStoreError::StoreNotFound(_)) => {
+                return Err(StorageError::StoreNotFound)
+            }
             Err(e) => return Err(StorageError::KVStore(e)),
         };
 
@@ -175,7 +177,9 @@ impl Storage for KVStoreStorage {
     ) -> Result<Option<RetainedSlot>, StorageError> {
         let store = match KVStore::open(&self.store_name) {
             Ok(Some(store)) => store,
-            Ok(None) => return Err(StorageError::StoreNotFound),
+            Ok(None) | Err(KVStoreError::StoreNotFound(_)) => {
+                return Err(StorageError::StoreNotFound)
+            }
             Err(e) => return Err(StorageError::KVStore(e)),
         };
 
