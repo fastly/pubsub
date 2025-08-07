@@ -195,6 +195,6 @@ For MQTT, durability is implemented as retained messages rather than a non-zero 
 Only being able to store the last message may seem limiting, but there are some benefits:
 
 * Storing messages indefinitely becomes practical. You can retain messages without an expiration and use them to serve initial content.
-* No worry about bombarding subscribers with a large message backlog.
+* No worry about flooding subscribers with a large message backlog.
 
 The feature is best used for message streams where the latest message supersedes all previous messages. If you need to send a stream of changes that can only be reconciled by receiving every message, you may want to publish a hint or version number and have the subscriber fetch the actual changes out of band.
