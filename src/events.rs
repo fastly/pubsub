@@ -56,7 +56,7 @@ enum GripLastError<'a> {
 
 // if there is at least one Grip-Last header, this function is guaranteed
 // to return at least one item or error
-fn parse_grip_last(req: &Request) -> Result<Vec<(&str, &str)>, GripLastError> {
+fn parse_grip_last(req: &Request) -> Result<Vec<(&str, &str)>, GripLastError<'_>> {
     let mut out = Vec::new();
 
     for hvalue in req.get_header_all_str("Grip-Last") {
