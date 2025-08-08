@@ -361,7 +361,7 @@ pub fn handle_sync(ctx: &mut Context) -> Vec<Packet<'static>> {
 
         let r = match ctx.storage.read_retained(topic, after) {
             Ok(Some(r)) => r,
-            Ok(None) => continue,
+            Ok(None) | Err(StorageError::StoreNotFound) => continue,
             Err(e) => {
                 println!("failed to read message from storage: {e:?}");
 
